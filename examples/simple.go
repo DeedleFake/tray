@@ -1,6 +1,16 @@
 package main
 
-import "deedles.dev/tray"
+import (
+	"bytes"
+	_ "embed"
+	"image"
+	_ "image/png"
+
+	"deedles.dev/tray"
+)
+
+//go:embed icon.png
+var icon []byte
 
 func main() {
 	item, err := tray.New()
@@ -9,10 +19,11 @@ func main() {
 	}
 	defer item.Close()
 
-	err = item.Register()
+	img, _, err := image.Decode(bytes.NewReader(icon))
 	if err != nil {
 		panic(err)
 	}
+	item.SetIconPixmap(img)
 
 	select {}
 }
