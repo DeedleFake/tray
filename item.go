@@ -10,7 +10,7 @@ import (
 	"github.com/godbus/dbus/v5/prop"
 )
 
-const itemPath = "/StatusNotifierItem"
+const itemPath dbus.ObjectPath = "/StatusNotifierItem"
 
 type Item struct {
 	conn               *dbus.Conn
@@ -54,11 +54,10 @@ func (item *Item) export() error {
 		return err
 	}
 
-	props, err := prop.Export(item.conn, itemPath, makePropMap(item.inter))
+	err = item.exportProps()
 	if err != nil {
 		return err
 	}
-	item.props = props
 
 	err = item.exportIntrospect()
 	if err != nil {
@@ -85,6 +84,35 @@ func (item *Item) export() error {
 		return err
 	}
 
+	return nil
+}
+
+func (item *Item) exportProps() error {
+	m := prop.Map{
+		item.inter: map[string]*prop.Prop{
+			"Category":            makeProp(ApplicationStatus),
+			"Id":                  makeProp(""),
+			"Title":               makeProp(""),
+			"Status":              makeProp(Active),
+			"WindowId":            makeProp(uint32(0)),
+			"IconName":            makeProp(""),
+			"IconPixmap":          makeProp[[]pixmap](nil),
+			"OverlayIconName":     makeProp(""),
+			"OverlayIconPixmap":   makeProp[[]pixmap](nil),
+			"AttentionIconName":   makeProp(""),
+			"AttentionIconPixmap": makeProp[[]pixmap](nil),
+			"AttentionMovieName":  makeProp(""),
+			"ToolTip":             makeProp(tooltip{}),
+			"ItemIsMenu":          makeProp(false),
+			"Menu":                makeProp[dbus.ObjectPath]("/"),
+		},
+	}
+
+	props, err := prop.Export(item.conn, itemPath, m)
+	if err != nil {
+		return err
+	}
+	item.props = props
 	return nil
 }
 
@@ -262,33 +290,4 @@ func (item *Item) SetHandler(handler Handler) {
 		p = nil
 	}
 	item.handler.Store(p)
-}
-
-func makePropMap(inter string) prop.Map {
-	m := make(prop.Map, 1)
-	m[inter] = map[string]*prop.Prop{
-		"Category":            makeProp(ApplicationStatus),
-		"Id":                  makeProp(""),
-		"Title":               makeProp(""),
-		"Status":              makeProp(Active),
-		"WindowId":            makeProp(uint32(0)),
-		"IconName":            makeProp(""),
-		"IconPixmap":          makeProp[[]pixmap](nil),
-		"OverlayIconName":     makeProp(""),
-		"OverlayIconPixmap":   makeProp[[]pixmap](nil),
-		"AttentionIconName":   makeProp(""),
-		"AttentionIconPixmap": makeProp[[]pixmap](nil),
-		"AttentionMovieName":  makeProp(""),
-		"ToolTip":             makeProp(tooltip{}),
-		"ItemIsMenu":          makeProp(false),
-		"Menu":                makeProp[dbus.ObjectPath]("/"),
-	}
-	return m
-}
-
-func makeProp[T any](v T) *prop.Prop {
-	return &prop.Prop{
-		Value: v,
-		Emit:  prop.EmitTrue,
-	}
 }

@@ -10,6 +10,7 @@ import (
 
 	"deedles.dev/ximage/format"
 	"github.com/godbus/dbus/v5"
+	"github.com/godbus/dbus/v5/prop"
 )
 
 type Category string
@@ -119,4 +120,11 @@ type tooltip struct {
 	IconName           string
 	IconPixmap         []pixmap
 	Title, Description string
+}
+
+func makeProp[T any](v T) *prop.Prop {
+	return &prop.Prop{
+		Value: v,
+		Emit:  prop.EmitTrue,
+	}
 }
