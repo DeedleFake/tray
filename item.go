@@ -56,10 +56,6 @@ func (item *Item) export() error {
 	return nil
 }
 
-type statusNotifierItem struct {
-	item *Item
-}
-
 func (item *Item) Close() error {
 	reply, err := item.conn.ReleaseName(item.sni.Destination())
 	if err != nil {
@@ -70,4 +66,20 @@ func (item *Item) Close() error {
 	}
 
 	return nil
+}
+
+func (item *Item) Register() error {
+	space, err := getSpace(item.conn)
+	if err != nil {
+		return err
+	}
+
+	return item.conn.Object(
+		fmt.Sprintf("org.%v.StatusNotifierWatcher", space),
+		"/StatusNotifierWatcher",
+	).Call("RegisterStatusNotifierItem", 0).Store()
+}
+
+type statusNotifierItem struct {
+	item *Item
 }
