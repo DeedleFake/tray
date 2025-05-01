@@ -77,7 +77,11 @@ func (item *Item) Register() error {
 	return item.conn.Object(
 		fmt.Sprintf("org.%v.StatusNotifierWatcher", space),
 		"/StatusNotifierWatcher",
-	).Call("RegisterStatusNotifierItem", 0).Store()
+	).Call(
+		fmt.Sprintf("org.%v.StatusNotifierWatcher.RegisterStatusNotifierItem", space),
+		0,
+		item.sni.Destination(),
+	).Store()
 }
 
 type statusNotifierItem struct {
