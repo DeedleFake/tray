@@ -28,6 +28,13 @@ const (
 	NeedsAttention Status = "NeedsAttention"
 )
 
+type Orientation string
+
+const (
+	Horizontal Orientation = "horizontal"
+	Vertical   Orientation = "vertical"
+)
+
 type Item struct {
 	conn         *dbus.Conn
 	sni          dbus.BusObject
@@ -64,7 +71,7 @@ func (item *Item) export() error {
 	item.sni = item.conn.Object(name, "/StatusNotifierItem")
 
 	err = item.conn.Export(
-		statusNotifierItem{item: item},
+		(*statusNotifierItem)(item),
 		item.sni.Path(),
 		item.sni.Destination(),
 	)
@@ -78,12 +85,7 @@ func (item *Item) export() error {
 	}
 	item.props = props
 
-	err = exportIntrospect(
-		item.conn,
-		item.inter,
-		item.sni,
-		props,
-	)
+	err = item.exportIntrospect()
 	if err != nil {
 		return err
 	}
@@ -109,6 +111,32 @@ func (item *Item) export() error {
 	}
 
 	return nil
+}
+
+func (item *Item) exportIntrospect() error {
+	path := item.sni.Path()
+	node := introspect.Node{
+		Name: string(path),
+		Interfaces: []introspect.Interface{
+			introspect.IntrospectData,
+			prop.IntrospectData,
+			{
+				Name:       item.inter,
+				Methods:    introspect.Methods((*statusNotifierItem)(item)),
+				Properties: item.props.Introspection(item.inter),
+				Signals: []introspect.Signal{
+					{Name: "NewTitle"},
+					{Name: "NewIcon"},
+					{Name: "NewAttentionIcon"},
+					{Name: "NewOverlayIcon"},
+					{Name: "NewToolTip"},
+					{Name: "NewStatus"},
+				},
+			},
+		},
+	}
+
+	return item.conn.Export(introspect.NewIntrospectable(&node), path, "org.freedesktop.DBus.Introspectable")
 }
 
 func (item *Item) Close() error {
@@ -275,32 +303,6 @@ func makeProp[T any](v T) *prop.Prop {
 	}
 }
 
-func exportIntrospect(conn *dbus.Conn, inter string, obj dbus.BusObject, props *prop.Properties) error {
-	path := obj.Path()
-	node := introspect.Node{
-		Name: string(path),
-		Interfaces: []introspect.Interface{
-			introspect.IntrospectData,
-			prop.IntrospectData,
-			{
-				Name:       inter,
-				Methods:    introspect.Methods(statusNotifierItem{}),
-				Properties: props.Introspection(inter),
-				Signals: []introspect.Signal{
-					{Name: "NewTitle"},
-					{Name: "NewIcon"},
-					{Name: "NewAttentionIcon"},
-					{Name: "NewOverlayIcon"},
-					{Name: "NewToolTip"},
-					{Name: "NewStatus"},
-				},
-			},
-		},
-	}
-
-	return conn.Export(introspect.NewIntrospectable(&node), path, "org.freedesktop.DBus.Introspectable")
-}
-
 type pixmap struct {
 	Width, Height int
 	Data          []byte
@@ -350,4 +352,22 @@ type tooltip struct {
 	IconName           string
 	IconPixmap         []pixmap
 	Title, Description string
+}
+
+type statusNotifierItem Item
+
+func (item *statusNotifierItem) ContextMenu(x, y int) *dbus.Error {
+	return nil
+}
+
+func (item *statusNotifierItem) Activate(x, y int) *dbus.Error {
+	return nil
+}
+
+func (item *statusNotifierItem) SecondaryActivate(x, y int) *dbus.Error {
+	return nil
+}
+
+func (item *statusNotifierItem) Scroll(delta int, orientation Orientation) *dbus.Error {
+	return nil
 }
