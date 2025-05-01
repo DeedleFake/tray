@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/draw"
+	"slices"
 	"sync/atomic"
 
 	"deedles.dev/ximage/format"
@@ -332,6 +333,7 @@ func toPixmap(img image.Image) pixmap {
 		Pix:    make([]byte, format.ARGB8888.Size()*bounds.Dx()*bounds.Dy()),
 	}
 	draw.Draw(dst, bounds, img, bounds.Min, draw.Src)
+	endianSwap(dst.Pix)
 
 	return pixmap{
 		Width:  bounds.Dx(),
@@ -341,10 +343,13 @@ func toPixmap(img image.Image) pixmap {
 }
 
 func (p pixmap) Image() image.Image {
+	data := slices.Clone(p.Data)
+	endianSwap(data)
+
 	return &format.Image{
 		Format: format.ARGB8888,
 		Rect:   image.Rect(0, 0, p.Width, p.Height),
-		Pix:    p.Data,
+		Pix:    data,
 	}
 }
 
@@ -362,6 +367,16 @@ func toPixmaps(images []image.Image) []pixmap {
 		pixmaps = append(pixmaps, toPixmap(img))
 	}
 	return pixmaps
+}
+
+func endianSwap(data []byte) {
+	if len(data)%4 != 0 {
+		panic(fmt.Errorf("len(data) %% 4 != 0, len(data) == %v", len(data)))
+	}
+
+	for i := 0; i < len(data); i += 4 {
+		slices.Reverse(data[i : i+4])
+	}
 }
 
 type tooltip struct {
