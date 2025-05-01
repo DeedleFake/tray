@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	_ "embed"
+	"fmt"
 	"image"
 	_ "image/png"
 
@@ -27,6 +28,10 @@ func main() {
 	item.SetTitle("Simple Example")
 	item.SetIconPixmap(img)
 	item.SetToolTip("", nil, "Simple Example", "A simple example of a tray icon.")
+	item.SetHandler(tray.ActivateHandler(func(x, y int) error {
+		fmt.Println("Activated.")
+		return nil
+	}))
 
 	select {}
 }

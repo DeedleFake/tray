@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/draw"
+	"sync/atomic"
 
 	"deedles.dev/ximage/format"
 	"github.com/godbus/dbus/v5"
@@ -40,6 +41,7 @@ type Item struct {
 	sni          dbus.BusObject
 	props        *prop.Properties
 	space, inter string
+	handler      atomic.Pointer[Handler]
 }
 
 func New() (*Item, error) {
@@ -73,7 +75,7 @@ func (item *Item) export() error {
 	err = item.conn.Export(
 		(*statusNotifierItem)(item),
 		item.sni.Path(),
-		item.sni.Destination(),
+		item.inter,
 	)
 	if err != nil {
 		return err
@@ -274,6 +276,22 @@ func (item *Item) SetItemIsMenu(itemIsMenu bool) {
 	item.props.SetMust(item.inter, "ItemIsMenu", itemIsMenu)
 }
 
+func (item *Item) Handler() Handler {
+	h := item.handler.Load()
+	if h == nil {
+		return nil
+	}
+	return *h
+}
+
+func (item *Item) SetHandler(handler Handler) {
+	p := &handler
+	if handler == nil {
+		p = nil
+	}
+	item.handler.Store(p)
+}
+
 func makePropMap(inter string) prop.Map {
 	m := make(prop.Map, 1)
 	m[inter] = map[string]*prop.Prop{
@@ -352,22 +370,4 @@ type tooltip struct {
 	IconName           string
 	IconPixmap         []pixmap
 	Title, Description string
-}
-
-type statusNotifierItem Item
-
-func (item *statusNotifierItem) ContextMenu(x, y int) *dbus.Error {
-	return nil
-}
-
-func (item *statusNotifierItem) Activate(x, y int) *dbus.Error {
-	return nil
-}
-
-func (item *statusNotifierItem) SecondaryActivate(x, y int) *dbus.Error {
-	return nil
-}
-
-func (item *statusNotifierItem) Scroll(delta int, orientation Orientation) *dbus.Error {
-	return nil
 }
