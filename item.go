@@ -123,6 +123,10 @@ func (item *Item) Close() error {
 	return nil
 }
 
+func (item *Item) emit(name string) error {
+	return item.conn.Emit(item.sni.Path(), fmt.Sprintf("org.%v.StatusNotifierItem.%v", item.space, name))
+}
+
 func (item *Item) Category() Category {
 	return item.props.GetMust(item.inter, "Category").(Category)
 }
@@ -139,12 +143,22 @@ func (item *Item) SetID(id string) error {
 	return item.sni.SetProperty("Id", id)
 }
 
+func (item *Item) Title() string {
+	return item.props.GetMust(item.inter, "Title").(string)
+}
+
+func (item *Item) SetTitle(title string) error {
+	item.props.SetMust(item.inter, "Title", title)
+	return item.emit("NewTitle")
+}
+
 func (item *Item) Status() Status {
 	return item.props.GetMust(item.inter, "Status").(Status)
 }
 
-func (item *Item) SetStatus(status Status) {
+func (item *Item) SetStatus(status Status) error {
 	item.props.SetMust(item.inter, "Status", status)
+	return item.emit("NewStatus")
 }
 
 func (item *Item) WindowID() uint32 {
@@ -161,25 +175,75 @@ func (item *Item) IconName() string {
 
 func (item *Item) SetIconName(name string) error {
 	item.props.SetMust(item.inter, "IconName", name)
-	return item.conn.Emit(item.sni.Path(), fmt.Sprintf("org.%v.StatusNotifierItem.NewIcon", item.space))
+	return item.emit("NewIcon")
 }
 
 func (item *Item) IconPixmap() []image.Image {
 	pixmaps := item.props.GetMust(item.inter, "IconPixmap").([]pixmap)
-	images := make([]image.Image, 0, len(pixmaps))
-	for _, p := range pixmaps {
-		images = append(images, p.Image())
-	}
-	return images
+	return fromPixmaps(pixmaps)
 }
 
 func (item *Item) SetIconPixmap(images ...image.Image) error {
-	pixmaps := make([]pixmap, 0, len(images))
-	for _, img := range images {
-		pixmaps = append(pixmaps, toPixmap(img))
-	}
+	pixmaps := toPixmaps(images)
 	item.props.SetMust(item.inter, "IconPixmap", pixmaps)
-	return item.conn.Emit(item.sni.Path(), fmt.Sprintf("org.%v.StatusNotifierItem.NewIcon", item.space))
+	return item.emit("NewIcon")
+}
+
+func (item *Item) OverlayIconName() string {
+	return item.props.GetMust(item.inter, "OverlayIconName").(string)
+}
+
+func (item *Item) SetOverlayIconName(name string) error {
+	item.props.SetMust(item.inter, "OverlayIconName", name)
+	return item.emit("NewOverlayIcon")
+}
+
+func (item *Item) OverlayIconPixmap() []image.Image {
+	pixmaps := item.props.GetMust(item.inter, "OverlayIconPixmap").([]pixmap)
+	return fromPixmaps(pixmaps)
+}
+
+func (item *Item) SetOverlayIconPixmap(images ...image.Image) error {
+	pixmaps := toPixmaps(images)
+	item.props.SetMust(item.inter, "OverlayIconPixmap", pixmaps)
+	return item.emit("NewOverlayIcon")
+}
+
+func (item *Item) AttentionIconPixmap() []image.Image {
+	pixmaps := item.props.GetMust(item.inter, "AttentionIconPixmap").([]pixmap)
+	return fromPixmaps(pixmaps)
+}
+
+func (item *Item) SetAttentionIconPixmap(images ...image.Image) error {
+	pixmaps := toPixmaps(images)
+	item.props.SetMust(item.inter, "AttentionIconPixmap", pixmaps)
+	return item.emit("NewAttentionIcon")
+}
+
+func (item *Item) AttentionMovieName() string {
+	return item.props.GetMust(item.inter, "AttentionMovieName").(string)
+}
+
+func (item *Item) SetAttentionMovieName(name string) {
+	item.props.SetMust(item.inter, "AttentionMovieName", name)
+}
+
+func (item *Item) ToolTip() (iconName string, iconPixmap []image.Image, title, description string) {
+	tooltip := item.props.GetMust(item.inter, "ToolTip").(tooltip)
+	return tooltip.IconName, fromPixmaps(tooltip.IconPixmap), tooltip.Title, tooltip.Description
+}
+
+func (item *Item) SetToolTip(iconName string, iconPixmap []image.Image, title, description string) error {
+	item.props.SetMust(item.inter, "ToolTip", tooltip{IconName: iconName, IconPixmap: toPixmaps(iconPixmap), Title: title, Description: description})
+	return item.emit("NewToolTip")
+}
+
+func (item *Item) ItemIsMenu() bool {
+	return item.props.GetMust(item.inter, "ItemIsMenu").(bool)
+}
+
+func (item *Item) SetItemIsMenu(itemIsMenu bool) {
+	item.props.SetMust(item.inter, "ItemIsMenu", itemIsMenu)
 }
 
 func makePropMap(inter string) prop.Map {
@@ -187,6 +251,7 @@ func makePropMap(inter string) prop.Map {
 	m[inter] = map[string]*prop.Prop{
 		"Category":            makeProp(ApplicationStatus),
 		"Id":                  makeProp(""),
+		"Title":               makeProp(""),
 		"Status":              makeProp(Active),
 		"WindowId":            makeProp(uint32(0)),
 		"IconName":            makeProp(""),
@@ -222,7 +287,12 @@ func exportIntrospect(conn *dbus.Conn, inter string, obj dbus.BusObject, props *
 				Methods:    introspect.Methods(statusNotifierItem{}),
 				Properties: props.Introspection(inter),
 				Signals: []introspect.Signal{
+					{Name: "NewTitle"},
 					{Name: "NewIcon"},
+					{Name: "NewAttentionIcon"},
+					{Name: "NewOverlayIcon"},
+					{Name: "NewToolTip"},
+					{Name: "NewStatus"},
 				},
 			},
 		},
@@ -258,6 +328,22 @@ func (p pixmap) Image() image.Image {
 		Rect:   image.Rect(0, 0, p.Width, p.Height),
 		Pix:    p.Data,
 	}
+}
+
+func fromPixmaps(pixmaps []pixmap) []image.Image {
+	images := make([]image.Image, 0, len(pixmaps))
+	for _, p := range pixmaps {
+		images = append(images, p.Image())
+	}
+	return images
+}
+
+func toPixmaps(images []image.Image) []pixmap {
+	pixmaps := make([]pixmap, 0, len(images))
+	for _, img := range images {
+		pixmaps = append(pixmaps, toPixmap(img))
+	}
+	return pixmaps
 }
 
 type tooltip struct {

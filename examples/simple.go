@@ -23,7 +23,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	item.SetTitle("Simple Example")
 	item.SetIconPixmap(img)
+	item.SetToolTip("", nil, "Simple Example", "A simple example of a tray icon.")
 
 	select {}
 }
