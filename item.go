@@ -12,6 +12,8 @@ import (
 	"github.com/godbus/dbus/v5/prop"
 )
 
+const itemPath = "/StatusNotifierItem"
+
 type Category string
 
 const (
@@ -37,11 +39,10 @@ const (
 )
 
 type Item struct {
-	conn         *dbus.Conn
-	sni          dbus.BusObject
-	props        *prop.Properties
-	space, inter string
-	handler      atomic.Pointer[Handler]
+	conn               *dbus.Conn
+	props              *prop.Properties
+	space, inter, name string
+	handler            atomic.Pointer[Handler]
 }
 
 func New() (*Item, error) {
@@ -68,20 +69,18 @@ func (item *Item) export() error {
 	}
 	item.space = space
 	item.inter = fmt.Sprintf("org.%v.StatusNotifierItem", space)
-
-	name := getName(space)
-	item.sni = item.conn.Object(name, "/StatusNotifierItem")
+	item.name = getName(space)
 
 	err = item.conn.Export(
 		(*statusNotifierItem)(item),
-		item.sni.Path(),
+		itemPath,
 		item.inter,
 	)
 	if err != nil {
 		return err
 	}
 
-	props, err := prop.Export(item.conn, item.sni.Path(), makePropMap(item.inter))
+	props, err := prop.Export(item.conn, itemPath, makePropMap(item.inter))
 	if err != nil {
 		return err
 	}
@@ -92,7 +91,7 @@ func (item *Item) export() error {
 		return err
 	}
 
-	reply, err := item.conn.RequestName(item.sni.Destination(), 0)
+	reply, err := item.conn.RequestName(item.name, 0)
 	if err != nil {
 		return err
 	}
@@ -106,7 +105,7 @@ func (item *Item) export() error {
 	).Call(
 		fmt.Sprintf("org.%v.StatusNotifierWatcher.RegisterStatusNotifierItem", space),
 		0,
-		item.sni.Destination(),
+		item.name,
 	).Store()
 	if err != nil {
 		return err
@@ -116,9 +115,8 @@ func (item *Item) export() error {
 }
 
 func (item *Item) exportIntrospect() error {
-	path := item.sni.Path()
 	node := introspect.Node{
-		Name: string(path),
+		Name: string(itemPath),
 		Interfaces: []introspect.Interface{
 			introspect.IntrospectData,
 			prop.IntrospectData,
@@ -138,11 +136,11 @@ func (item *Item) exportIntrospect() error {
 		},
 	}
 
-	return item.conn.Export(introspect.NewIntrospectable(&node), path, "org.freedesktop.DBus.Introspectable")
+	return item.conn.Export(introspect.NewIntrospectable(&node), itemPath, "org.freedesktop.DBus.Introspectable")
 }
 
 func (item *Item) Close() error {
-	reply, err := item.conn.ReleaseName(item.sni.Destination())
+	reply, err := item.conn.ReleaseName(item.name)
 	if err != nil {
 		return err
 	}
@@ -154,7 +152,7 @@ func (item *Item) Close() error {
 }
 
 func (item *Item) emit(name string) error {
-	return item.conn.Emit(item.sni.Path(), fmt.Sprintf("org.%v.StatusNotifierItem.%v", item.space, name))
+	return item.conn.Emit(itemPath, fmt.Sprintf("org.%v.StatusNotifierItem.%v", item.space, name))
 }
 
 func (item *Item) Category() Category {
@@ -169,8 +167,8 @@ func (item *Item) ID() string {
 	return item.props.GetMust(item.inter, "Id").(string)
 }
 
-func (item *Item) SetID(id string) error {
-	return item.sni.SetProperty("Id", id)
+func (item *Item) SetID(id string) {
+	item.props.SetMust(item.inter, "Id", id)
 }
 
 func (item *Item) Title() string {
