@@ -77,6 +77,20 @@ func (menu *Menu) exportIntrospect() error {
 				Name:       menuInter,
 				Methods:    introspect.Methods((*dbusmenu)(menu)),
 				Properties: menu.props.Introspection(menuInter),
+				Signals: []introspect.Signal{
+					{Name: "ItemsPropertiesUpdated", Args: []introspect.Arg{
+						{Name: "updatedProps", Type: "a(ia{sv})", Direction: "out"},
+						{Name: "removedProps", Type: "a(ias)", Direction: "out"},
+					}},
+					{Name: "LayoutUpdated", Args: []introspect.Arg{
+						{Name: "revision", Type: "u", Direction: "out"},
+						{Name: "parent", Type: "i", Direction: "out"},
+					}},
+					{Name: "ItemActivationRequested", Args: []introspect.Arg{
+						{Name: "id", Type: "i", Direction: "out"},
+						{Name: "timestamp", Type: "u", Direction: "out"},
+					}},
+				},
 			},
 		},
 	}
