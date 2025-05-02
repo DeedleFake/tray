@@ -102,6 +102,7 @@ func (item *Item) exportProps() error {
 			"WindowId":            makeProp(uint32(0)),
 			"IconName":            makeProp(""),
 			"IconPixmap":          makeProp[[]pixmap](nil),
+			"IconAccessibleDesc":  makeProp(""),
 			"OverlayIconName":     makeProp(""),
 			"OverlayIconPixmap":   makeProp[[]pixmap](nil),
 			"AttentionIconName":   makeProp(""),
@@ -214,6 +215,14 @@ func (item *Item) SetIconPixmap(images ...image.Image) error {
 	pixmaps := toPixmaps(images)
 	item.props.SetMust(item.inter, "IconPixmap", pixmaps)
 	return item.emit("NewIcon")
+}
+
+func (item *Item) IconAccessibleDesc() string {
+	return item.props.GetMust(item.inter, "IconAccessibleDesc").(string)
+}
+
+func (item *Item) SetIconAccessibleDesc(desc string) {
+	item.props.SetMust(item.inter, "IconAccessibleDesc", desc)
 }
 
 func (item *Item) OverlayIconName() string {
