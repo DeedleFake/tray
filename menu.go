@@ -185,7 +185,7 @@ func (menu *dbusmenu) GetProperty(id int, name string) (any, *dbus.Error) {
 	return item.props[name], nil
 }
 
-func (menu *dbusmenu) Event(id int, eventID MenuEventID, data any, timestamp uint32) *dbus.Error {
+func (menu *dbusmenu) Event(id int, eventID MenuEventID, data dbus.Variant, timestamp uint32) *dbus.Error {
 	return nil
 }
 
