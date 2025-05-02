@@ -32,6 +32,8 @@ func onTrayActivate(x, y int) error {
 }
 
 func main() {
+	done := make(chan struct{})
+
 	item, err := tray.New(
 		tray.ItemID("dev.deedles.tray.examples.simple"),
 		tray.ItemTitle("Simple Example"),
@@ -50,7 +52,7 @@ func main() {
 	)
 
 	var m sync.Mutex
-	var p, add, remove *tray.MenuItem
+	var p, add, remove, quit *tray.MenuItem
 	props := []tray.MenuItemProp{
 		tray.MenuItemLabel("Print"),
 		tray.MenuItemHandler(tray.ClickedHandler(func(data any, timestamp uint32) error {
@@ -67,6 +69,7 @@ func main() {
 			defer m.Unlock()
 
 			p, _ = item.Menu().AddItem(props...)
+			p.MoveBefore(quit)
 			add.SetProps(tray.MenuItemEnabled(false))
 			remove.SetProps(tray.MenuItemEnabled(true))
 			return nil
@@ -89,8 +92,18 @@ func main() {
 	item.Menu().AddItem(tray.MenuItemType(tray.Separator))
 
 	m.Lock()
+
 	p, _ = item.Menu().AddItem(props...)
+
+	quit, _ = item.Menu().AddItem(
+		tray.MenuItemLabel("Quit"),
+		tray.MenuItemHandler(tray.ClickedHandler(func(data any, timestamp uint32) error {
+			close(done)
+			return nil
+		})),
+	)
+
 	m.Unlock()
 
-	select {}
+	<-done
 }

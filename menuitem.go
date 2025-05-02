@@ -149,12 +149,74 @@ func (item *MenuItem) emitPropertiesUpdated(props []string) error {
 	)
 }
 
+func (menu *Menu) lock() func() {
+	menu.m.Lock()
+	return func() { menu.m.Unlock() }
+}
+
+func (menu *Menu) getChildren() []int {
+	return menu.children
+}
+
+func (menu *Menu) setChildren(c []int) {
+	menu.children = c
+}
+
 func (menu *Menu) emitLayoutUpdated() error {
 	return menu.item.conn.Emit(menuPath, "com.canonical.dbusmenu.LayoutUpdated", menu.revision, 0)
 }
 
+func (item *MenuItem) lock() func() {
+	item.m.Lock()
+	return func() { item.m.Unlock() }
+}
+
+func (item *MenuItem) getChildren() []int {
+	return item.children
+}
+
+func (item *MenuItem) setChildren(c []int) {
+	item.children = c
+}
+
 func (item *MenuItem) emitLayoutUpdated() error {
 	return item.menu.item.conn.Emit(menuPath, "com.canonical.dbusmenu.LayoutUpdated", item.menu.revision, item.id)
+}
+
+func (item *MenuItem) MoveBefore(sibling *MenuItem) error {
+	dst := sibling.getParent()
+	src := item.getParent()
+	if dst == nil || src == nil {
+		return nil
+	}
+
+	defer dst.lock()()
+	if dst != src {
+		defer src.lock()()
+	}
+
+	dc := dst.getChildren()
+	i := slices.Index(dc, sibling.id)
+	if i < 0 {
+		i = len(dc)
+	}
+
+	src.setChildren(sliceRemove(src.getChildren(), item.id))
+	dst.setChildren(slices.Insert(dc, i, item.id))
+
+	if dst != item.menu && src != item.menu {
+		item.menu.m.Lock()
+		defer item.menu.m.Unlock()
+	}
+	item.menu.revision++
+
+	var errs [2]error
+	errs[0] = dst.emitLayoutUpdated()
+	if dst != src {
+		errs[1] = src.emitLayoutUpdated()
+	}
+
+	return errors.Join(errs[:]...)
 }
 
 func (item *MenuItem) Type() MenuType {
@@ -381,4 +443,26 @@ func ClickedHandler(handler func(data any, timestamp uint32) error) MenuEventHan
 		}
 		return nil
 	}
+}
+
+type parent interface {
+	lock() func()
+	getChildren() []int
+	setChildren([]int)
+	emitLayoutUpdated() error
+}
+
+func (item *MenuItem) getParent() parent {
+	if item.parent == 0 {
+		return item.menu
+	}
+
+	item.menu.m.RLock()
+	defer item.menu.m.RUnlock()
+
+	p, ok := item.menu.layout[item.parent]
+	if !ok {
+		return nil
+	}
+	return p
 }
