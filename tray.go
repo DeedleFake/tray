@@ -6,35 +6,12 @@ import (
 	"image/draw"
 	"os"
 	"slices"
+	"sync"
 	"sync/atomic"
 
 	"deedles.dev/ximage/format"
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/prop"
-)
-
-type Category string
-
-const (
-	ApplicationStatus Category = "ApplicationStatus"
-	Communications    Category = "Communications"
-	SystemServices    Category = "SystemServices"
-	Hardware          Category = "Hardware"
-)
-
-type Status string
-
-const (
-	Passive        Status = "Passive"
-	Active         Status = "Active"
-	NeedsAttention Status = "NeedsAttention"
-)
-
-type Orientation string
-
-const (
-	Horizontal Orientation = "horizontal"
-	Vertical   Orientation = "vertical"
 )
 
 var id uint64
@@ -127,4 +104,52 @@ func makeProp[T any](v T) *prop.Prop {
 		Value: v,
 		Emit:  prop.EmitTrue,
 	}
+}
+
+func makeConstProp[T any](v T) *prop.Prop {
+	p := makeProp(v)
+	p.Emit = prop.EmitConst
+	return p
+}
+
+type lazy[T any] struct {
+	m  sync.RWMutex
+	v  T
+	ok bool
+}
+
+func (lazy *lazy[T]) Get(create func() (T, error)) (T, error) {
+	lazy.m.RLock()
+	if lazy.ok {
+		v := lazy.v
+		lazy.m.RUnlock()
+		return v, nil
+	}
+	lazy.m.RUnlock()
+
+	lazy.m.Lock()
+	defer lazy.m.Unlock()
+
+	if lazy.ok {
+		return lazy.v, nil
+	}
+
+	v, err := create()
+	if err != nil {
+		return v, err
+	}
+
+	lazy.v = v
+	lazy.ok = true
+
+	return v, nil
+}
+
+func (lazy *lazy[T]) Clear() {
+	lazy.m.Lock()
+	defer lazy.m.Unlock()
+
+	var zero T
+	lazy.v = zero
+	lazy.ok = false
 }

@@ -33,5 +33,10 @@ func main() {
 		return nil
 	}))
 
+	_, err = item.Menu()
+	if err != nil {
+		panic(err)
+	}
+
 	select {}
 }

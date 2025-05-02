@@ -15,12 +15,13 @@ const itemPath dbus.ObjectPath = "/StatusNotifierItem"
 type Item struct {
 	conn               *dbus.Conn
 	props              *prop.Properties
+	menu               lazy[*Menu]
 	space, inter, name string
 	handler            atomic.Pointer[Handler]
 }
 
 func New() (*Item, error) {
-	conn, err := dbus.SessionBus()
+	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
 		return nil, err
 	}
@@ -45,11 +46,7 @@ func (item *Item) export() error {
 	item.inter = fmt.Sprintf("org.%v.StatusNotifierItem", space)
 	item.name = getName(space)
 
-	err = item.conn.Export(
-		(*statusNotifierItem)(item),
-		itemPath,
-		item.inter,
-	)
+	err = item.conn.Export((*statusNotifierItem)(item), itemPath, item.inter)
 	if err != nil {
 		return err
 	}
@@ -104,7 +101,7 @@ func (item *Item) exportProps() error {
 			"AttentionMovieName":  makeProp(""),
 			"ToolTip":             makeProp(tooltip{}),
 			"ItemIsMenu":          makeProp(false),
-			"Menu":                makeProp[dbus.ObjectPath]("/"),
+			"Menu":                makeConstProp(menuPath),
 		},
 	}
 
@@ -291,3 +288,27 @@ func (item *Item) SetHandler(handler Handler) {
 	}
 	item.handler.Store(p)
 }
+
+type Category string
+
+const (
+	ApplicationStatus Category = "ApplicationStatus"
+	Communications    Category = "Communications"
+	SystemServices    Category = "SystemServices"
+	Hardware          Category = "Hardware"
+)
+
+type Status string
+
+const (
+	Passive        Status = "Passive"
+	Active         Status = "Active"
+	NeedsAttention Status = "NeedsAttention"
+)
+
+type Orientation string
+
+const (
+	Horizontal Orientation = "horizontal"
+	Vertical   Orientation = "vertical"
+)
