@@ -1,6 +1,9 @@
 package tray
 
 import (
+	"bytes"
+	"image"
+	"image/png"
 	"sync"
 
 	"github.com/godbus/dbus/v5"
@@ -142,6 +145,8 @@ func (menu *dbusmenu) buildChildren(parent *MenuItem, depth int, props []string)
 }
 
 func (menu *dbusmenu) GetLayout(parentID int, recursionDepth int, propertyNames []string) (revision uint32, layout menuLayout, derr *dbus.Error) {
+	log("menu method", "name", "GetLayout", "parentID", parentID, "propertyNames", propertyNames)
+
 	menu.m.RLock()
 	defer menu.m.RUnlock()
 
@@ -150,6 +155,8 @@ func (menu *dbusmenu) GetLayout(parentID int, recursionDepth int, propertyNames 
 }
 
 func (menu *dbusmenu) GetGroupProperties(ids []int, propertyNames []string) ([]menuProps, *dbus.Error) {
+	log("menu method", "name", "GetGroupProperties", "ids", ids, "propertyNames", propertyNames)
+
 	menu.m.RLock()
 	defer menu.m.RUnlock()
 
@@ -171,6 +178,8 @@ func (menu *dbusmenu) GetGroupProperties(ids []int, propertyNames []string) ([]m
 }
 
 func (menu *dbusmenu) GetProperty(id int, name string) (any, *dbus.Error) {
+	log("menu method", "name", "GetProperty", "id", id, "name", name)
+
 	menu.m.RLock()
 	defer menu.m.RUnlock()
 
@@ -186,19 +195,23 @@ func (menu *dbusmenu) GetProperty(id int, name string) (any, *dbus.Error) {
 }
 
 func (menu *dbusmenu) Event(id int, eventID MenuEventID, data dbus.Variant, timestamp uint32) *dbus.Error {
+	log("menu method", "name", "Event", "id", id, "eventID", eventID, "data", data, "timestamp", timestamp)
 	return nil
 }
 
 func (menu *dbusmenu) EventGroup(events []menuEvent) ([]int, *dbus.Error) {
+	log("menu method", "name", "EventGroup", "events", events)
 	return nil, nil
 }
 
 func (menu *dbusmenu) AboutToShow(id int) (bool, *dbus.Error) {
+	log("menu method", "name", "AboutToShow", "id", id)
 	// TODO: Return true only if changes have happened.
 	return true, nil
 }
 
 func (menu *dbusmenu) AboutToShowGroup(ids []int) ([]menuUpdate, []int, *dbus.Error) {
+	log("menu method", "name", "AboutToShowGroup", "ids", ids)
 	return nil, nil, nil
 }
 
@@ -219,8 +232,9 @@ const (
 type MenuEventID string
 
 const (
-	Clicked  MenuEventID = "clicked"
-	Hovereed MenuEventID = "hovered"
+	Clicked MenuEventID = "clicked"
+	Hovered MenuEventID = "hovered"
+	Closed  MenuEventID = "closed"
 )
 
 type menuLayout struct {
@@ -299,6 +313,28 @@ func (item *MenuItem) emitLayoutUpdated() error {
 	return item.menu.item.conn.Emit(menuPath, "com.canonical.dbusmenu.LayoutUpdated", item.menu.revision, item.id)
 }
 
+func (item *MenuItem) Type() MenuItemType {
+	item.m.RLock()
+	defer item.m.RUnlock()
+
+	return mapLookup(item.props, "type", MenuItemType("standard"))
+}
+
+func (item *MenuItem) SetType(t MenuItemType) {
+	item.m.Lock()
+	defer item.m.Unlock()
+
+	item.props["type"] = t
+	item.emitLayoutUpdated()
+}
+
+func (item *MenuItem) Label() string {
+	item.m.RLock()
+	defer item.m.RUnlock()
+
+	return mapLookup(item.props, "label", "")
+}
+
 func (item *MenuItem) SetLabel(label string) {
 	item.m.Lock()
 	defer item.m.Unlock()
@@ -306,3 +342,97 @@ func (item *MenuItem) SetLabel(label string) {
 	item.props["label"] = label
 	item.emitLayoutUpdated()
 }
+
+func (item *MenuItem) Enabled() bool {
+	item.m.RLock()
+	defer item.m.RUnlock()
+
+	return mapLookup(item.props, "enabled", true)
+}
+
+func (item *MenuItem) SetEnabled(enabled bool) {
+	item.m.Lock()
+	defer item.m.Unlock()
+
+	item.props["enabled"] = enabled
+	item.emitLayoutUpdated()
+}
+
+func (item *MenuItem) Visible() bool {
+	item.m.RLock()
+	defer item.m.RUnlock()
+
+	return mapLookup(item.props, "visible", true)
+}
+
+func (item *MenuItem) SetVisible(visible bool) {
+	item.m.Lock()
+	defer item.m.Unlock()
+
+	item.props["visible"] = visible
+	item.emitLayoutUpdated()
+}
+
+func (item *MenuItem) IconName() string {
+	item.m.RLock()
+	defer item.m.RUnlock()
+
+	return mapLookup(item.props, "icon-name", "")
+}
+
+func (item *MenuItem) SetIconName(name string) {
+	item.m.Lock()
+	defer item.m.Unlock()
+
+	item.props["icon-name"] = name
+	item.emitLayoutUpdated()
+}
+
+func (item *MenuItem) IconData() (image.Image, error) {
+	item.m.RLock()
+	defer item.m.RUnlock()
+
+	data, ok := item.props["icon-data"].([]byte)
+	if !ok {
+		return nil, nil
+	}
+	return png.Decode(bytes.NewReader(data))
+}
+
+func (item *MenuItem) SetIconData(img image.Image) error {
+	item.m.Lock()
+	defer item.m.Unlock()
+
+	var buf bytes.Buffer
+	err := png.Encode(&buf, img)
+	if err != nil {
+		return err
+	}
+
+	item.props["icon-data"] = buf.Bytes()
+	item.emitLayoutUpdated()
+	return nil
+}
+
+func (item *MenuItem) Shortcut() [][]string {
+	item.m.RLock()
+	defer item.m.RUnlock()
+
+	v, _ := item.props["shortcut"].([][]string)
+	return v
+}
+
+func (item *MenuItem) SetShortcut(shortcut [][]string) {
+	item.m.Lock()
+	defer item.m.Unlock()
+
+	item.props["shortcut"] = shortcut
+	item.emitLayoutUpdated()
+}
+
+type MenuItemType string
+
+const (
+	Standard  MenuItemType = "standard"
+	Separator MenuItemType = "separator"
+)

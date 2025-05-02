@@ -63,3 +63,11 @@ func mapSlice[K comparable, V any, M ~map[K]V](m M, s []K) M {
 	}
 	return m2
 }
+
+func mapLookup[K comparable, V any](m map[K]any, k K, d V) V {
+	v, ok := m[k].(V)
+	if !ok {
+		return d
+	}
+	return v
+}
