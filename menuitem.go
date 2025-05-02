@@ -3,6 +3,7 @@ package tray
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"image"
 	"image/png"
 	"sync"
@@ -132,8 +133,29 @@ func (item *MenuItem) Shortcut() [][]string {
 	item.m.RLock()
 	defer item.m.RUnlock()
 
-	v, _ := item.props["shortcut"].([][]string)
-	return v
+	return mapLookup(item.props, "shortcut", [][]string(nil))
+}
+
+func (item *MenuItem) ToggleType() MenuToggleType {
+	item.m.RLock()
+	defer item.m.RUnlock()
+
+	return mapLookup(item.props, "toggle-type", MenuToggleType(""))
+}
+
+func (item *MenuItem) ToggleState() MenuToggleState {
+	item.m.RLock()
+	defer item.m.RUnlock()
+
+	return mapLookup(item.props, "toggle-state", MenuToggleState(-1))
+}
+
+func (item *MenuItem) VendorProp(vendor, prop string) (any, bool) {
+	item.m.RLock()
+	defer item.m.RUnlock()
+
+	v, ok := item.props[vendorPropName(vendor, prop)]
+	return v, ok
 }
 
 func (item *MenuItem) SetProps(props ...MenuItemProp) error {
@@ -157,6 +179,25 @@ const (
 	Standard  MenuType = "standard"
 	Separator MenuType = "separator"
 )
+
+type MenuToggleType string
+
+const (
+	NonToggleable MenuToggleType = ""
+	Checkmark     MenuToggleType = "checkmark"
+	Radio         MenuToggleType = "radio"
+)
+
+type MenuToggleState int
+
+const (
+	Off MenuToggleState = 0
+	On  MenuToggleState = 1
+)
+
+func (state MenuToggleState) Indeterminate() bool {
+	return state != Off && state != On
+}
 
 type MenuEventHandler func(eventID MenuEventID, data any, timestamp uint32) error
 
@@ -220,8 +261,30 @@ func MenuItemShortcut(shortcut [][]string) MenuItemProp {
 	}
 }
 
+func MenuItemToggleType(t MenuToggleType) MenuItemProp {
+	return func(item *menuItemProps) {
+		item.props["toggle-type"] = t
+	}
+}
+
+func MenuItemToggleState(state MenuToggleState) MenuItemProp {
+	return func(item *menuItemProps) {
+		item.props["toggle-state"] = state
+	}
+}
+
+func MenuItemVendorProp(vendor, prop string, value any) MenuItemProp {
+	return func(item *menuItemProps) {
+		item.props[vendorPropName(vendor, prop)] = value
+	}
+}
+
 func MenuItemHandler(handler MenuEventHandler) MenuItemProp {
 	return func(item *menuItemProps) {
 		item.handler = handler
 	}
+}
+
+func vendorPropName(vendor, prop string) string {
+	return fmt.Sprintf("x-%v-%v", vendor, prop)
 }
