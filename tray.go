@@ -80,3 +80,11 @@ func mapLookup[K comparable, V any](m map[K]any, k K, d V) V {
 	}
 	return v
 }
+
+func sliceRemove[S ~[]T, T comparable](s S, v T) S {
+	i := slices.Index(s, v)
+	if i < 0 {
+		return s
+	}
+	return slices.Delete(s, i, i+1)
+}

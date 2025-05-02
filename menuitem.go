@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"slices"
 	"sync"
 )
 
 type MenuItem struct {
-	menu *Menu
-	id   int
+	menu   *Menu
+	id     int
+	parent int
 
 	m        sync.RWMutex
 	props    map[string]any
@@ -19,16 +21,16 @@ type MenuItem struct {
 	handler  MenuEventHandler
 }
 
-func (menu *Menu) newItem() *MenuItem {
+func (menu *Menu) newItem(parent int) *MenuItem {
 	menu.id++
 	item := MenuItem{
-		menu:  menu,
-		id:    menu.id,
-		props: make(map[string]any),
+		menu:   menu,
+		id:     menu.id,
+		parent: parent,
+		props:  make(map[string]any),
 	}
 
 	menu.layout[item.id] = &item
-	menu.revision++
 
 	return &item
 }
@@ -37,15 +39,15 @@ func (menu *Menu) AddItem(props ...MenuItemProp) (*MenuItem, error) {
 	menu.m.Lock()
 	defer menu.m.Unlock()
 
-	item := menu.newItem()
+	item := menu.newItem(0)
 	menu.children = append(menu.children, menu.id)
 
 	item.m.Lock()
 	defer item.m.Unlock()
 
 	menu.revision++
-	errs := item.applyProps(props)
-	errs = append(errs, menu.item.conn.Emit(menuPath, "com.canonical.dbusmenu.LayoutUpdated", menu.revision, 0))
+	errs := item.applyProps(props, false)
+	errs = append(errs, menu.emitLayoutUpdated())
 
 	return item, errors.Join(errs...)
 }
@@ -57,26 +59,96 @@ func (item *MenuItem) AddItem(props ...MenuItemProp) (*MenuItem, error) {
 	item.m.Lock()
 	defer item.m.Unlock()
 
-	child := item.menu.newItem()
+	child := item.menu.newItem(item.id)
 	item.children = append(item.children, child.id)
 
 	child.m.Lock()
 	defer child.m.Unlock()
 
 	child.menu.revision++
-	errs := child.applyProps(props)
+	errs := child.applyProps(props, false)
 	item.props["children-display"] = "submenu"
 	errs = append(errs, item.emitLayoutUpdated())
 
 	return child, errors.Join(errs...)
 }
 
-func (item *MenuItem) applyProps(props []MenuItemProp) []error {
+func (item *MenuItem) Remove() {
+	item.menu.m.Lock()
+	defer item.menu.m.Unlock()
+
+	delete(item.menu.layout, item.id)
+	if item.parent == 0 {
+		item.menu.children = sliceRemove(item.menu.children, item.id)
+		item.menu.revision++
+		item.menu.emitLayoutUpdated()
+		return
+	}
+
+	parent := item.menu.layout[item.parent]
+	if parent == nil {
+		return
+	}
+
+	parent.m.Lock()
+	defer parent.m.Unlock()
+
+	parent.children = sliceRemove(parent.children, item.id)
+
+	item.menu.revision++
+	parent.emitLayoutUpdated()
+}
+
+func (item *MenuItem) applyProps(props []MenuItemProp, emit bool) []error {
 	w := menuItemProps{MenuItem: item}
 	for _, p := range props {
 		p(&w)
 	}
+	if !emit {
+		return w.errs
+	}
+
+	w.errs = append(w.errs, item.emitPropertiesUpdated(w.dirty))
 	return w.errs
+}
+
+func (item *MenuItem) emitPropertiesUpdated(props []string) error {
+	type prop struct {
+		Name  string
+		Value any
+	}
+
+	type updatedProps struct {
+		ID    int
+		Props []prop
+	}
+
+	type removedProps struct {
+		ID    int
+		Props []string
+	}
+
+	updated := make([]prop, 0, len(props))
+	for _, change := range props {
+		updated = append(updated, prop{
+			Name:  change,
+			Value: item.props[change],
+		})
+	}
+
+	return item.menu.item.conn.Emit(
+		menuPath,
+		"com.canonical.dbusmenu.ItemsPropertiesUpdated",
+		[]updatedProps{{
+			ID:    item.id,
+			Props: updated,
+		}},
+		[]removedProps(nil),
+	)
+}
+
+func (menu *Menu) emitLayoutUpdated() error {
+	return menu.item.conn.Emit(menuPath, "com.canonical.dbusmenu.LayoutUpdated", menu.revision, 0)
 }
 
 func (item *MenuItem) emitLayoutUpdated() error {
@@ -162,14 +234,7 @@ func (item *MenuItem) SetProps(props ...MenuItemProp) error {
 	item.m.Lock()
 	defer item.m.Unlock()
 
-	errs := item.applyProps(props)
-
-	item.menu.m.Lock()
-	defer item.menu.m.Unlock()
-
-	item.menu.revision++
-	errs = append(errs, item.emitLayoutUpdated())
-
+	errs := item.applyProps(props, true)
 	return errors.Join(errs...)
 }
 
@@ -205,7 +270,14 @@ type MenuItemProp func(*menuItemProps)
 
 type menuItemProps struct {
 	*MenuItem
-	errs []error
+	dirty []string
+	errs  []error
+}
+
+func (item *menuItemProps) mark(change string) {
+	if !slices.Contains(item.dirty, change) {
+		item.dirty = append(item.dirty, change)
+	}
 }
 
 func (item *menuItemProps) catch(err error) {
@@ -221,24 +293,28 @@ func MenuItemType(t MenuType) MenuItemProp {
 func MenuItemLabel(label string) MenuItemProp {
 	return func(item *menuItemProps) {
 		item.props["label"] = label
+		item.mark("label")
 	}
 }
 
 func MenuItemEnabled(enabled bool) MenuItemProp {
 	return func(item *menuItemProps) {
 		item.props["enabled"] = enabled
+		item.mark("enabled")
 	}
 }
 
 func MenuItemVisible(visible bool) MenuItemProp {
 	return func(item *menuItemProps) {
 		item.props["visible"] = visible
+		item.mark("visible")
 	}
 }
 
 func MenuItemIconName(name string) MenuItemProp {
 	return func(item *menuItemProps) {
 		item.props["icon-name"] = name
+		item.mark("icon-name")
 	}
 }
 
@@ -252,30 +328,36 @@ func MenuItemIconData(img image.Image) MenuItemProp {
 		}
 
 		item.props["icon-data"] = buf.Bytes()
+		item.mark("icon-data")
 	}
 }
 
 func MenuItemShortcut(shortcut [][]string) MenuItemProp {
 	return func(item *menuItemProps) {
 		item.props["shortcut"] = shortcut
+		item.mark("shortcut")
 	}
 }
 
 func MenuItemToggleType(t MenuToggleType) MenuItemProp {
 	return func(item *menuItemProps) {
 		item.props["toggle-type"] = t
+		item.mark("toggle-type")
 	}
 }
 
 func MenuItemToggleState(state MenuToggleState) MenuItemProp {
 	return func(item *menuItemProps) {
 		item.props["toggle-state"] = state
+		item.mark("toggle-state")
 	}
 }
 
 func MenuItemVendorProp(vendor, prop string, value any) MenuItemProp {
 	return func(item *menuItemProps) {
-		item.props[vendorPropName(vendor, prop)] = value
+		name := vendorPropName(vendor, prop)
+		item.props[name] = value
+		item.mark(name)
 	}
 }
 
@@ -287,4 +369,13 @@ func MenuItemHandler(handler MenuEventHandler) MenuItemProp {
 
 func vendorPropName(vendor, prop string) string {
 	return fmt.Sprintf("x-%v-%v", vendor, prop)
+}
+
+func ClickedHandler(handler func(data any, timestamp uint32) error) MenuEventHandler {
+	return func(eventID MenuEventID, data any, timestamp uint32) error {
+		if eventID == Clicked {
+			return handler(data, timestamp)
+		}
+		return nil
+	}
 }

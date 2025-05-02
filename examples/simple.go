@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	_ "image/png"
+	"sync"
 
 	"deedles.dev/tray"
 )
@@ -43,42 +44,49 @@ func main() {
 	}
 	defer item.Close()
 
-	first, _ := item.Menu().AddItem(
-		tray.MenuItemLabel("First"),
-		tray.MenuItemHandler(func(event tray.MenuEventID, data any, timestamp uint32) error {
-			switch event {
-			case tray.Opened:
-				fmt.Println("First opened.")
-			case tray.Closed:
-				fmt.Println("First closed.")
-			}
-			return nil
-		}),
+	group, _ := item.Menu().AddItem(
+		tray.MenuItemLabel("Edit"),
 	)
 
-	item.Menu().AddItem(
-		tray.MenuItemType(tray.Separator),
+	var m sync.Mutex
+	var p, add, remove *tray.MenuItem
+	props := []tray.MenuItemProp{
+		tray.MenuItemLabel("Print"),
+		tray.MenuItemHandler(tray.ClickedHandler(func(data any, timestamp uint32) error {
+			fmt.Println("Print clicked.")
+			return nil
+		})),
+	}
+
+	add, _ = group.AddItem(
+		tray.MenuItemLabel("Add"),
+		tray.MenuItemEnabled(false),
+		tray.MenuItemHandler(tray.ClickedHandler(func(data any, timestamp uint32) error {
+			m.Lock()
+			defer m.Unlock()
+
+			p, _ = item.Menu().AddItem(props...)
+			add.SetProps(tray.MenuItemEnabled(false))
+			remove.SetProps(tray.MenuItemEnabled(true))
+			return nil
+		})),
 	)
 
-	item.Menu().AddItem(
-		tray.MenuItemLabel("Second"),
-		tray.MenuItemHandler(func(event tray.MenuEventID, data any, timestamp uint32) error {
-			if event == tray.Clicked {
-				fmt.Println("Second clicked.")
-			}
+	remove, _ = group.AddItem(
+		tray.MenuItemLabel("Remove"),
+		tray.MenuItemHandler(tray.ClickedHandler(func(data any, timestamp uint32) error {
+			p.Remove()
+			add.SetProps(tray.MenuItemEnabled(true))
+			remove.SetProps(tray.MenuItemEnabled(false))
 			return nil
-		}),
+		})),
 	)
 
-	first.AddItem(
-		tray.MenuItemLabel("Third"),
-		tray.MenuItemHandler(func(event tray.MenuEventID, data any, timestamp uint32) error {
-			if event == tray.Clicked {
-				fmt.Println("Third clicked.")
-			}
-			return nil
-		}),
-	)
+	item.Menu().AddItem(tray.MenuItemType(tray.Separator))
+
+	m.Lock()
+	p, _ = item.Menu().AddItem(props...)
+	m.Unlock()
 
 	select {}
 }
