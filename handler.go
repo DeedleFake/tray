@@ -2,6 +2,17 @@ package tray
 
 import "github.com/godbus/dbus/v5"
 
+// Handler specifies behavior for incoming events for a
+// StatusNotifierItem. In most cases, Activate is the only method of
+// interest, as that's the one that's called when an icon is clicked
+// or double-clicked. For that common case, see [ActivateHandler].
+//
+// Errors returned by the methods of a Handler are sent over D-Bus as
+// a response to the call that resulted in the Handler being invoked
+// in the first place. In a lot of cases, this won't do much besides
+// possibly showing up in a log somewhere, so it's probably best in
+// those cases to handle it locally some other way, if appropriate,
+// and then just return nil regardless.
 type Handler interface {
 	ContextMenu(x, y int) error
 	Activate(x, y int) error
@@ -9,6 +20,10 @@ type Handler interface {
 	Scroll(delta int, orientation Orientation) error
 }
 
+// ActiveHandler is a convenience type for the common case of only
+// needing to implement the Activate method of [Handler]. It calls
+// itself when Activate is called and does nothing for all other
+// methods.
 type ActivateHandler func(x, y int) error
 
 func (h ActivateHandler) ContextMenu(x, y int) error                      { return nil }
