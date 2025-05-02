@@ -52,7 +52,7 @@ func (menu *Menu) export() error {
 func (menu *Menu) exportProps() error {
 	m := prop.Map{
 		menuInter: map[string]*prop.Prop{
-			"Version":       makeConstProp(20),
+			"Version":       makeConstProp(3),
 			"TextDirection": makeProp(LeftToRight),
 			"Status":        makeProp(Normal),
 			"IconThemePath": makeProp(""),
