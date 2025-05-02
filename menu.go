@@ -194,7 +194,8 @@ func (menu *dbusmenu) EventGroup(events []menuEvent) ([]int, *dbus.Error) {
 }
 
 func (menu *dbusmenu) AboutToShow(id int) (bool, *dbus.Error) {
-	return false, nil
+	// TODO: Return true only if changes have happened.
+	return true, nil
 }
 
 func (menu *dbusmenu) AboutToShowGroup(ids []int) ([]menuUpdate, []int, *dbus.Error) {
@@ -289,12 +290,13 @@ func (item *MenuItem) AddItem() *MenuItem {
 
 	child := item.menu.newItem()
 	item.children = append(item.children, child.id)
+	item.emitLayoutUpdated()
 
 	return child
 }
 
-func (item *MenuItem) emitLayoutUpdated() {
-	item.menu.item.conn.Emit(menuPath, "com.canonical.dbusmenu.LayoutUpdated", item.menu.revision, item.id)
+func (item *MenuItem) emitLayoutUpdated() error {
+	return item.menu.item.conn.Emit(menuPath, "com.canonical.dbusmenu.LayoutUpdated", item.menu.revision, item.id)
 }
 
 func (item *MenuItem) SetLabel(label string) {
