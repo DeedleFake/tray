@@ -25,6 +25,7 @@ type Menu struct {
 	layout   map[int]*MenuItem
 	children []int
 	revision uint32
+	handler  MenuEventHandler
 }
 
 func (item *Item) createMenu() error {
@@ -103,11 +104,18 @@ func (menu *Menu) exportIntrospect() error {
 	return menu.item.conn.Export(introspect.NewIntrospectable(&node), menuPath, "org.freedesktop.DBus.Introspectable")
 }
 
+func (menu *Menu) SetHandler(handler MenuEventHandler) {
+	menu.m.Lock()
+	defer menu.m.Unlock()
+
+	menu.handler = handler
+}
+
 type dbusmenu Menu
 
 func (menu *dbusmenu) buildLayout(item *MenuItem, depth int, props []string) menuLayout {
 	var id int
-	var properties map[string]any
+	properties := map[string]any{"children-display": "submenu"}
 	if item != nil {
 		item.m.RLock()
 		defer item.m.RUnlock()
@@ -194,8 +202,37 @@ func (menu *dbusmenu) GetProperty(id int, name string) (any, *dbus.Error) {
 	return item.props[name], nil
 }
 
+func (menu *dbusmenu) getHandler(id int) MenuEventHandler {
+	menu.m.RLock()
+	defer menu.m.RUnlock()
+
+	if id == 0 {
+		return menu.handler
+	}
+
+	item := menu.layout[id]
+	if item == nil {
+		return nil
+	}
+
+	item.m.RLock()
+	defer item.m.RUnlock()
+
+	return item.handler
+}
+
 func (menu *dbusmenu) Event(id int, eventID MenuEventID, data dbus.Variant, timestamp uint32) *dbus.Error {
 	log("menu method", "name", "Event", "id", id, "eventID", eventID, "data", data, "timestamp", timestamp)
+
+	h := menu.getHandler(id)
+	if h == nil {
+		return nil
+	}
+
+	err := h(eventID, data.Value(), timestamp)
+	if err != nil {
+		return dbus.MakeFailedError(err)
+	}
 	return nil
 }
 
@@ -267,6 +304,7 @@ type MenuItem struct {
 	m        sync.RWMutex
 	props    map[string]any
 	children []int
+	handler  MenuEventHandler
 }
 
 func (menu *Menu) newItem() *MenuItem {
@@ -430,9 +468,18 @@ func (item *MenuItem) SetShortcut(shortcut [][]string) {
 	item.emitLayoutUpdated()
 }
 
+func (item *MenuItem) SetHandler(handler MenuEventHandler) {
+	item.m.Lock()
+	defer item.m.Unlock()
+
+	item.handler = handler
+}
+
 type MenuItemType string
 
 const (
 	Standard  MenuItemType = "standard"
 	Separator MenuItemType = "separator"
 )
+
+type MenuEventHandler func(eventID MenuEventID, data any, timestamp uint32) error

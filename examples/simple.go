@@ -35,8 +35,27 @@ func main() {
 	}))
 
 	menu := item.Menu()
+
 	mitem := menu.AddItem()
 	mitem.SetLabel("First")
+	mitem.SetHandler(func(event tray.MenuEventID, data any, timestamp uint32) error {
+		if event == tray.Clicked {
+			fmt.Println("First clicked.")
+		}
+		return nil
+	})
+
+	mitem = menu.AddItem()
+	mitem.SetType(tray.Separator)
+
+	mitem = menu.AddItem()
+	mitem.SetLabel("Second")
+	mitem.SetHandler(func(event tray.MenuEventID, data any, timestamp uint32) error {
+		if event == tray.Clicked {
+			fmt.Println("Second clicked.")
+		}
+		return nil
+	})
 
 	select {}
 }
