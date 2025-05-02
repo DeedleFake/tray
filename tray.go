@@ -1,3 +1,8 @@
+// Package tray is an implementation of StatusNotifierItem.
+//
+// Package tray provides a pure Go implementation of the
+// StatusNotifierItem D-Bus interface. This can be used to create
+// system tray icons and menus in most Linux desktop environments.
 package tray
 
 import (

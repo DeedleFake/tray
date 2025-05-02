@@ -16,6 +16,8 @@ import (
 
 const itemPath dbus.ObjectPath = "/StatusNotifierItem"
 
+// Item is a single StatusNotifierItem. Each item roughly corresponds
+// to a single icon in the system tray.
 type Item struct {
 	conn               *dbus.Conn
 	props              *prop.Properties
@@ -24,6 +26,11 @@ type Item struct {
 	handler            atomic.Pointer[Handler]
 }
 
+// New creates a new Item configured with the given props. It is
+// recommended to at least set the ID and Icon properties, though
+// these can be set later if preferred. The icon's behavior without
+// them set will likely not be useful, however, if it isn't completely
+// broken depending on the desktop environment.
 func New(props ...ItemProp) (*Item, error) {
 	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
@@ -153,6 +160,10 @@ func (item *Item) exportIntrospect() error {
 	return item.conn.Export(introspect.NewIntrospectable(&node), itemPath, "org.freedesktop.DBus.Introspectable")
 }
 
+// Close closes the underlying D-Bus connection, removing the item
+// from the tray. The behavior of any calls to any methods either on
+// this Item or on any associated Menu or MenuItem instances after
+// calling this is undefined.
 func (item *Item) Close() error {
 	return item.conn.Close()
 }
@@ -161,6 +172,10 @@ func (item *Item) emit(name string) error {
 	return item.conn.Emit(itemPath, fmt.Sprintf("org.%v.StatusNotifierItem.%v", item.space, name))
 }
 
+// SetProps sets the given properties for the item, emits any
+// necessary signals after setting all of them, and then returns any
+// errors that happened. A non-nil error return does not necessarily
+// indicate complete failure.
 func (item *Item) SetProps(props ...ItemProp) error {
 	w := itemProps{Item: item}
 	for _, p := range props {
@@ -175,70 +190,98 @@ func (item *Item) SetProps(props ...ItemProp) error {
 	return errors.Join(errs...)
 }
 
+// Category returns the current value of the Category property.
 func (item *Item) Category() Category {
 	return item.props.GetMust(item.inter, "Category").(Category)
 }
 
+// ID returns the current value of the Id property.
 func (item *Item) ID() string {
 	return item.props.GetMust(item.inter, "Id").(string)
 }
 
+// Title returns the current value of the Title property.
 func (item *Item) Title() string {
 	return item.props.GetMust(item.inter, "Title").(string)
 }
 
+// Status returns the current value of the Status property.
 func (item *Item) Status() Status {
 	return item.props.GetMust(item.inter, "Status").(Status)
 }
 
+// WindowID returns the current value of the WindowId property.
 func (item *Item) WindowID() uint32 {
 	return item.props.GetMust(item.inter, "WindowId").(uint32)
 }
 
+// IconName returns the current value of the IconName property.
 func (item *Item) IconName() string {
 	return item.props.GetMust(item.inter, "IconName").(string)
 }
 
+// IconPixmap returns the current value of the IconPixmap property.
 func (item *Item) IconPixmap() []image.Image {
 	pixmaps := item.props.GetMust(item.inter, "IconPixmap").([]pixmap)
 	return fromPixmaps(pixmaps)
 }
 
+// IconAccessibleDesc returns the current value of the
+// IconAccessibleDesc property.
 func (item *Item) IconAccessibleDesc() string {
 	return item.props.GetMust(item.inter, "IconAccessibleDesc").(string)
 }
 
+// OverlayIconName returns the current value of the OverlayIconName
+// property.
 func (item *Item) OverlayIconName() string {
 	return item.props.GetMust(item.inter, "OverlayIconName").(string)
 }
 
+// OverlayIconPixmap returns the current value of the
+// OverlayIconPixmap property.
 func (item *Item) OverlayIconPixmap() []image.Image {
 	pixmaps := item.props.GetMust(item.inter, "OverlayIconPixmap").([]pixmap)
 	return fromPixmaps(pixmaps)
 }
 
+// AttentionIconName returns the current value of the AttentionIconName
+// property.
+func (item *Item) AttentionIconName() string {
+	return item.props.GetMust(item.inter, "AttentionIconName").(string)
+}
+
+// AttentionIconPixmap returns the current value of the
+// AttentionIconPixmap property.
 func (item *Item) AttentionIconPixmap() []image.Image {
 	pixmaps := item.props.GetMust(item.inter, "AttentionIconPixmap").([]pixmap)
 	return fromPixmaps(pixmaps)
 }
 
+// AttentionMovieName returns the current value of the
+// AttentionMovieName property.
 func (item *Item) AttentionMovieName() string {
 	return item.props.GetMust(item.inter, "AttentionMovieName").(string)
 }
 
+// ToolTip returns the current values of the ToolTip property.
 func (item *Item) ToolTip() (iconName string, iconPixmap []image.Image, title, description string) {
 	tooltip := item.props.GetMust(item.inter, "ToolTip").(tooltip)
 	return tooltip.IconName, fromPixmaps(tooltip.IconPixmap), tooltip.Title, tooltip.Description
 }
 
+// IsMenu returns the current value of the ItemIsMenu property.
 func (item *Item) IsMenu() bool {
 	return item.props.GetMust(item.inter, "ItemIsMenu").(bool)
 }
 
+// Menu returns the Menu instance associated with the Item.
 func (item *Item) Menu() *Menu {
 	return item.menu
 }
 
+// Handler returns the Handler that is used to handle events triggered
+// by the desktop environment.
 func (item *Item) Handler() Handler {
 	h := item.handler.Load()
 	if h == nil {
@@ -247,6 +290,7 @@ func (item *Item) Handler() Handler {
 	return *h
 }
 
+// Category is the possible values of the Category Item property.
 type Category string
 
 const (
@@ -256,6 +300,7 @@ const (
 	Hardware          Category = "Hardware"
 )
 
+// Status is the possible values of the Status Item property.
 type Status string
 
 const (
@@ -264,6 +309,7 @@ const (
 	NeedsAttention Status = "NeedsAttention"
 )
 
+// Orientation is the possible directions of a scroll event.
 type Orientation string
 
 const (
@@ -326,6 +372,7 @@ type tooltip struct {
 	Title, Description string
 }
 
+// ItemProp is a function that modifies the properties of an Item.
 type ItemProp func(*itemProps)
 
 type itemProps struct {
@@ -339,18 +386,21 @@ func (item *itemProps) mark(change string) {
 	}
 }
 
+// ItemCategory sets the Category property to the given value.
 func ItemCategory(category Category) ItemProp {
 	return func(item *itemProps) {
 		item.props.SetMust(item.inter, "Category", category)
 	}
 }
 
+// ItemID sets the Id property to the given value.
 func ItemID(id string) ItemProp {
 	return func(item *itemProps) {
 		item.props.SetMust(item.inter, "Id", id)
 	}
 }
 
+// ItemTitle sets the Title property to the given value.
 func ItemTitle(title string) ItemProp {
 	return func(item *itemProps) {
 		item.props.SetMust(item.inter, "Title", title)
@@ -358,6 +408,7 @@ func ItemTitle(title string) ItemProp {
 	}
 }
 
+// ItemStatus sets the Status property to the given value.
 func ItemStatus(status Status) ItemProp {
 	return func(item *itemProps) {
 		item.props.SetMust(item.inter, "Status", status)
@@ -365,12 +416,14 @@ func ItemStatus(status Status) ItemProp {
 	}
 }
 
+// ItemWindowID sets the WindowId property to the given value.
 func ItemWindowID(id uint32) ItemProp {
 	return func(item *itemProps) {
 		item.props.SetMust(item.inter, "WindowId", id)
 	}
 }
 
+// ItemIconName sets the IconName property to the given value.
 func ItemIconName(name string) ItemProp {
 	return func(item *itemProps) {
 		item.props.SetMust(item.inter, "IconName", name)
@@ -378,6 +431,7 @@ func ItemIconName(name string) ItemProp {
 	}
 }
 
+// ItemIconPixmap sets the IconPixmap property to the given value.
 func ItemIconPixmap(images ...image.Image) ItemProp {
 	return func(item *itemProps) {
 		item.props.SetMust(item.inter, "IconPixmap", toPixmaps(images))
@@ -385,6 +439,8 @@ func ItemIconPixmap(images ...image.Image) ItemProp {
 	}
 }
 
+// ItemIconAccessibleDesc sets the IconAccessibleDesc property to the
+// given value.
 func ItemIconAccessibleDesc(desc string) ItemProp {
 	return func(item *itemProps) {
 		item.props.SetMust(item.inter, "IconAccessibleDesc", desc)
@@ -392,6 +448,8 @@ func ItemIconAccessibleDesc(desc string) ItemProp {
 	}
 }
 
+// ItemOverlayIconName sets the OverlayIconName property to the given
+// value.
 func ItemOverlayIconName(name string) ItemProp {
 	return func(item *itemProps) {
 		item.props.SetMust(item.inter, "OverlayIconName", name)
@@ -399,6 +457,8 @@ func ItemOverlayIconName(name string) ItemProp {
 	}
 }
 
+// ItemOverlayIconPixmap sets the OverlayIconPixmap property to the
+// given value.
 func ItemOverlayIconPixmap(images ...image.Image) ItemProp {
 	return func(item *itemProps) {
 		item.props.SetMust(item.inter, "OverlayIconPixmap", toPixmaps(images))
@@ -406,6 +466,8 @@ func ItemOverlayIconPixmap(images ...image.Image) ItemProp {
 	}
 }
 
+// ItemAttentionIconName sets the AttentionIconName property to the
+// given value.
 func ItemAttentionIconName(name string) ItemProp {
 	return func(item *itemProps) {
 		item.props.SetMust(item.inter, "AttentionIconName", name)
@@ -413,6 +475,8 @@ func ItemAttentionIconName(name string) ItemProp {
 	}
 }
 
+// ItemAttentionIconPixmap sets the AttentionIconPixmap property to
+// the given value.
 func ItemAttentionIconPixmap(images ...image.Image) ItemProp {
 	return func(item *itemProps) {
 		item.props.SetMust(item.inter, "AttentionIconPixmap", toPixmaps(images))
@@ -420,6 +484,8 @@ func ItemAttentionIconPixmap(images ...image.Image) ItemProp {
 	}
 }
 
+// ItemAttentionMovieName sets the AttentionMovieName property to the
+// given value.
 func ItemAttentionMovieName(name string) ItemProp {
 	return func(item *itemProps) {
 		item.props.SetMust(item.inter, "AttentionMovieName", name)
@@ -427,6 +493,7 @@ func ItemAttentionMovieName(name string) ItemProp {
 	}
 }
 
+// ItemToolTip sets the ToolTip property to the given values.
 func ItemToolTip(iconName string, iconPixmap []image.Image, title, description string) ItemProp {
 	return func(item *itemProps) {
 		item.props.SetMust(item.inter, "ToolTip", tooltip{IconName: iconName, IconPixmap: toPixmaps(iconPixmap), Title: title, Description: description})
@@ -434,12 +501,14 @@ func ItemToolTip(iconName string, iconPixmap []image.Image, title, description s
 	}
 }
 
+// ItemIsMenu sets the ItemIsMenu property to the given value.
 func ItemIsMenu(itemIsMenu bool) ItemProp {
 	return func(item *itemProps) {
 		item.props.SetMust(item.inter, "ItemIsMenu", itemIsMenu)
 	}
 }
 
+// ItemHandler sets the Item's handler.
 func ItemHandler(handler Handler) ItemProp {
 	return func(item *itemProps) {
 		p := &handler
