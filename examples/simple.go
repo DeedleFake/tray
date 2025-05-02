@@ -75,6 +75,9 @@ func main() {
 	remove, _ = group.AddItem(
 		tray.MenuItemLabel("Remove"),
 		tray.MenuItemHandler(tray.ClickedHandler(func(data any, timestamp uint32) error {
+			m.Lock()
+			defer m.Unlock()
+
 			p.Remove()
 			add.SetProps(tray.MenuItemEnabled(true))
 			remove.SetProps(tray.MenuItemEnabled(false))
