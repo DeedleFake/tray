@@ -100,6 +100,34 @@ func (menu *Menu) exportIntrospect() error {
 
 type dbusmenu Menu
 
+func (menu *dbusmenu) GetLayout(parentID int, recursionDepth int, propertyNames []string) (revision uint32, layout menuLayout, derr *dbus.Error) {
+	return 0, menuLayout{}, nil
+}
+
+func (menu *dbusmenu) GetProperties(ids []int, propertyNames []string) ([]menuProps, *dbus.Error) {
+	return nil, nil
+}
+
+func (menu *dbusmenu) GetProperty(id int, name string) (any, *dbus.Error) {
+	return nil, nil
+}
+
+func (menu *dbusmenu) Event(id int, eventID MenuEventID, data any, timestamp uint) *dbus.Error {
+	return nil
+}
+
+func (menu *dbusmenu) EventGroup(events []menuEvent) ([]int, *dbus.Error) {
+	return nil, nil
+}
+
+func (menu *dbusmenu) AboutToShow(id int) (bool, *dbus.Error) {
+	return false, nil
+}
+
+func (menu *dbusmenu) AboutToShowGroup(ids []int) ([]menuUpdate, []int, *dbus.Error) {
+	return nil, nil, nil
+}
+
 type TextDirectiuon string
 
 const (
@@ -113,3 +141,33 @@ const (
 	Normal MenuStatus = "normal"
 	Notice MenuStatus = "notice"
 )
+
+type MenuEventID string
+
+const (
+	Clicked  MenuEventID = "clicked"
+	Hovereed MenuEventID = "hovered"
+)
+
+type menuLayout struct {
+	ID         int
+	Properties map[string]any
+	Children   []any
+}
+
+type menuProps struct {
+	ID         int
+	Properties map[string]any
+}
+
+type menuEvent struct {
+	ID        int
+	EventID   MenuEventID
+	Data      any
+	Timestamp uint
+}
+
+type menuUpdate struct {
+	ID         int
+	NeedUpdate bool
+}
