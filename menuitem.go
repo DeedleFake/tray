@@ -64,6 +64,7 @@ func (item *MenuItem) AddItem(props ...MenuItemProp) *MenuItem {
 
 	child.menu.revision++
 	errs := child.applyProps(props)
+	item.props["children-display"] = "submenu"
 	errs = append(errs, item.emitLayoutUpdated())
 
 	return child

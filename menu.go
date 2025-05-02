@@ -268,6 +268,7 @@ type MenuEventID string
 const (
 	Clicked MenuEventID = "clicked"
 	Hovered MenuEventID = "hovered"
+	Opened  MenuEventID = "opened"
 	Closed  MenuEventID = "closed"
 )
 

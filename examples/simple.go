@@ -43,11 +43,14 @@ func main() {
 	}
 	defer item.Close()
 
-	item.Menu().AddItem(
+	first, _ := item.Menu().AddItem(
 		tray.MenuItemLabel("First"),
 		tray.MenuItemHandler(func(event tray.MenuEventID, data any, timestamp uint32) error {
-			if event == tray.Clicked {
-				fmt.Println("First clicked.")
+			switch event {
+			case tray.Opened:
+				fmt.Println("First opened.")
+			case tray.Closed:
+				fmt.Println("First closed.")
 			}
 			return nil
 		}),
@@ -62,6 +65,16 @@ func main() {
 		tray.MenuItemHandler(func(event tray.MenuEventID, data any, timestamp uint32) error {
 			if event == tray.Clicked {
 				fmt.Println("Second clicked.")
+			}
+			return nil
+		}),
+	)
+
+	first.AddItem(
+		tray.MenuItemLabel("Third"),
+		tray.MenuItemHandler(func(event tray.MenuEventID, data any, timestamp uint32) error {
+			if event == tray.Clicked {
+				fmt.Println("Third clicked.")
 			}
 			return nil
 		}),
