@@ -50,7 +50,7 @@ func (menu *Menu) AddItem(props ...MenuItemProp) (*MenuItem, error) {
 	return item, errors.Join(errs...)
 }
 
-func (item *MenuItem) AddItem(props ...MenuItemProp) *MenuItem {
+func (item *MenuItem) AddItem(props ...MenuItemProp) (*MenuItem, error) {
 	item.menu.m.Lock()
 	defer item.menu.m.Unlock()
 
@@ -68,7 +68,7 @@ func (item *MenuItem) AddItem(props ...MenuItemProp) *MenuItem {
 	item.props["children-display"] = "submenu"
 	errs = append(errs, item.emitLayoutUpdated())
 
-	return child
+	return child, errors.Join(errs...)
 }
 
 func (item *MenuItem) applyProps(props []MenuItemProp) []error {
