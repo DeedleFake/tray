@@ -25,7 +25,7 @@ func main() {
 		panic(err)
 	}
 
-	item.SetID("simple")
+	item.SetID("dev.deedles.tray.examples.simple")
 	item.SetTitle("Simple Example")
 	item.SetIconPixmap(img)
 	item.SetToolTip("", nil, "Simple Example", "A simple example of a tray icon.")
