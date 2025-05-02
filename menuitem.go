@@ -94,6 +94,9 @@ func (item *MenuItem) Remove() {
 	defer parent.m.Unlock()
 
 	parent.children = sliceRemove(parent.children, item.id)
+	if len(parent.children) == 0 {
+		delete(parent.props, "children-display")
+	}
 
 	item.menu.revision++
 	parent.emitLayoutUpdated()
