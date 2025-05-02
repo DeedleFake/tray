@@ -55,7 +55,7 @@ func (menu *Menu) exportProps() error {
 			"Version":       makeConstProp(3),
 			"TextDirection": makeProp(LeftToRight),
 			"Status":        makeProp(Normal),
-			"IconThemePath": makeProp(""),
+			"IconThemePath": makeProp[[]string](nil),
 		},
 	}
 
@@ -104,7 +104,7 @@ func (menu *dbusmenu) GetLayout(parentID int, recursionDepth int, propertyNames 
 	return 0, menuLayout{}, nil
 }
 
-func (menu *dbusmenu) GetProperties(ids []int, propertyNames []string) ([]menuProps, *dbus.Error) {
+func (menu *dbusmenu) GetGroupProperties(ids []int, propertyNames []string) ([]menuProps, *dbus.Error) {
 	return nil, nil
 }
 
@@ -128,11 +128,11 @@ func (menu *dbusmenu) AboutToShowGroup(ids []int) ([]menuUpdate, []int, *dbus.Er
 	return nil, nil, nil
 }
 
-type TextDirectiuon string
+type TextDirection string
 
 const (
-	LeftToRight TextDirectiuon = "ltr"
-	RightToLeft TextDirectiuon = "rtl"
+	LeftToRight TextDirection = "ltr"
+	RightToLeft TextDirection = "rtl"
 )
 
 type MenuStatus string
