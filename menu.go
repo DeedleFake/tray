@@ -1,6 +1,7 @@
 package tray
 
 import (
+	"maps"
 	"strings"
 	"sync"
 
@@ -166,18 +167,25 @@ func (menu *dbusmenu) GetGroupProperties(ids []int, propertyNames []string) ([]m
 	menu.m.RLock()
 	defer menu.m.RUnlock()
 
-	r := make([]menuProps, len(ids))
-	for i, id := range ids {
-		item := menu.layout[id]
-		if item == nil {
-			continue
+	items := maps.Values(menu.layout)
+	if len(ids) != 0 {
+		items = func(yield func(*MenuItem) bool) {
+			for _, id := range ids {
+				item := menu.layout[id]
+				if item != nil && !yield(item) {
+					return
+				}
+			}
 		}
+	}
 
+	var r []menuProps
+	for item := range items {
 		item.m.RLock()
-		r[i] = menuProps{
-			ID:         id,
+		r = append(r, menuProps{
+			ID:         item.id,
 			Properties: mapSlice(item.props, propertyNames),
-		}
+		})
 		item.m.RUnlock()
 	}
 	return r, nil
