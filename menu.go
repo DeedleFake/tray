@@ -1,6 +1,7 @@
 package tray
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/godbus/dbus/v5"
@@ -278,6 +279,20 @@ const (
 	Opened  MenuEventID = "opened"
 	Closed  MenuEventID = "closed"
 )
+
+func (id MenuEventID) ParseVendor() (vendor, event string, ok bool) {
+	e, ok := strings.CutPrefix(string(id), "x-")
+	if !ok {
+		return "", string(id), false
+	}
+
+	vendor, e, ok = strings.Cut(e, "-")
+	if !ok {
+		return "", string(id), false
+	}
+
+	return vendor, e, true
+}
 
 type menuLayout struct {
 	ID         int
