@@ -10,29 +10,38 @@ import (
 	"deedles.dev/tray"
 )
 
-//go:embed icon.png
-var icon []byte
+var (
+	//go:embed icon.png
+	iconData []byte
+
+	icon image.Image
+)
+
+func init() {
+	img, _, err := image.Decode(bytes.NewReader(iconData))
+	if err != nil {
+		panic(err)
+	}
+	icon = img
+}
+
+func onTrayActivate(x, y int) error {
+	fmt.Println("Activated.")
+	return nil
+}
 
 func main() {
-	item, err := tray.New()
+	item, err := tray.New(
+		tray.ItemID("dev.deedles.tray.examples.simple"),
+		tray.ItemTitle("Simple Example"),
+		tray.ItemIconPixmap(icon),
+		tray.ItemToolTip("", nil, "Simple Example", "A simple example of a tray icon."),
+		tray.ItemHandler(tray.ActivateHandler(onTrayActivate)),
+	)
 	if err != nil {
 		panic(err)
 	}
 	defer item.Close()
-
-	img, _, err := image.Decode(bytes.NewReader(icon))
-	if err != nil {
-		panic(err)
-	}
-
-	item.SetID("dev.deedles.tray.examples.simple")
-	item.SetTitle("Simple Example")
-	item.SetIconPixmap(img)
-	item.SetToolTip("", nil, "Simple Example", "A simple example of a tray icon.")
-	item.SetHandler(tray.ActivateHandler(func(x, y int) error {
-		fmt.Println("Activated.")
-		return nil
-	}))
 
 	menu := item.Menu()
 

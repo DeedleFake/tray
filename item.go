@@ -1,6 +1,7 @@
 package tray
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	"image/draw"
@@ -23,7 +24,7 @@ type Item struct {
 	handler            atomic.Pointer[Handler]
 }
 
-func New() (*Item, error) {
+func New(props ...ItemProp) (*Item, error) {
 	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
 		return nil, err
@@ -32,7 +33,7 @@ func New() (*Item, error) {
 	item := Item{
 		conn: conn,
 	}
-	err = item.export()
+	err = item.export(props)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +41,7 @@ func New() (*Item, error) {
 	return &item, nil
 }
 
-func (item *Item) export() error {
+func (item *Item) export(props []ItemProp) error {
 	space, err := getSpace(item.conn)
 	if err != nil {
 		return err
@@ -65,6 +66,11 @@ func (item *Item) export() error {
 	}
 
 	err = item.createMenu()
+	if err != nil {
+		return err
+	}
+
+	err = item.SetProps(props...)
 	if err != nil {
 		return err
 	}
@@ -155,55 +161,42 @@ func (item *Item) emit(name string) error {
 	return item.conn.Emit(itemPath, fmt.Sprintf("org.%v.StatusNotifierItem.%v", item.space, name))
 }
 
-func (item *Item) Category() Category {
-	return item.props.GetMust(item.inter, "Category").(Category)
+func (item *Item) SetProps(props ...ItemProp) error {
+	w := itemProps{Item: item}
+	for _, p := range props {
+		p(&w)
+	}
+
+	errs := make([]error, 0, len(w.dirty))
+	for _, s := range w.dirty {
+		errs = append(errs, item.emit(s))
+	}
+
+	return errors.Join(errs...)
 }
 
-func (item *Item) SetCategory(category Category) {
-	item.props.SetMust(item.inter, "Category", category)
+func (item *Item) Category() Category {
+	return item.props.GetMust(item.inter, "Category").(Category)
 }
 
 func (item *Item) ID() string {
 	return item.props.GetMust(item.inter, "Id").(string)
 }
 
-func (item *Item) SetID(id string) {
-	item.props.SetMust(item.inter, "Id", id)
-}
-
 func (item *Item) Title() string {
 	return item.props.GetMust(item.inter, "Title").(string)
-}
-
-func (item *Item) SetTitle(title string) error {
-	item.props.SetMust(item.inter, "Title", title)
-	return item.emit("NewTitle")
 }
 
 func (item *Item) Status() Status {
 	return item.props.GetMust(item.inter, "Status").(Status)
 }
 
-func (item *Item) SetStatus(status Status) error {
-	item.props.SetMust(item.inter, "Status", status)
-	return item.emit("NewStatus")
-}
-
 func (item *Item) WindowID() uint32 {
 	return item.props.GetMust(item.inter, "WindowId").(uint32)
 }
 
-func (item *Item) SetWindowID(id uint32) {
-	item.props.SetMust(item.inter, "WindowId", id)
-}
-
 func (item *Item) IconName() string {
 	return item.props.GetMust(item.inter, "IconName").(string)
-}
-
-func (item *Item) SetIconName(name string) error {
-	item.props.SetMust(item.inter, "IconName", name)
-	return item.emit("NewIcon")
 }
 
 func (item *Item) IconPixmap() []image.Image {
@@ -211,27 +204,12 @@ func (item *Item) IconPixmap() []image.Image {
 	return fromPixmaps(pixmaps)
 }
 
-func (item *Item) SetIconPixmap(images ...image.Image) error {
-	pixmaps := toPixmaps(images)
-	item.props.SetMust(item.inter, "IconPixmap", pixmaps)
-	return item.emit("NewIcon")
-}
-
 func (item *Item) IconAccessibleDesc() string {
 	return item.props.GetMust(item.inter, "IconAccessibleDesc").(string)
 }
 
-func (item *Item) SetIconAccessibleDesc(desc string) {
-	item.props.SetMust(item.inter, "IconAccessibleDesc", desc)
-}
-
 func (item *Item) OverlayIconName() string {
 	return item.props.GetMust(item.inter, "OverlayIconName").(string)
-}
-
-func (item *Item) SetOverlayIconName(name string) error {
-	item.props.SetMust(item.inter, "OverlayIconName", name)
-	return item.emit("NewOverlayIcon")
 }
 
 func (item *Item) OverlayIconPixmap() []image.Image {
@@ -239,29 +217,13 @@ func (item *Item) OverlayIconPixmap() []image.Image {
 	return fromPixmaps(pixmaps)
 }
 
-func (item *Item) SetOverlayIconPixmap(images ...image.Image) error {
-	pixmaps := toPixmaps(images)
-	item.props.SetMust(item.inter, "OverlayIconPixmap", pixmaps)
-	return item.emit("NewOverlayIcon")
-}
-
 func (item *Item) AttentionIconPixmap() []image.Image {
 	pixmaps := item.props.GetMust(item.inter, "AttentionIconPixmap").([]pixmap)
 	return fromPixmaps(pixmaps)
 }
 
-func (item *Item) SetAttentionIconPixmap(images ...image.Image) error {
-	pixmaps := toPixmaps(images)
-	item.props.SetMust(item.inter, "AttentionIconPixmap", pixmaps)
-	return item.emit("NewAttentionIcon")
-}
-
 func (item *Item) AttentionMovieName() string {
 	return item.props.GetMust(item.inter, "AttentionMovieName").(string)
-}
-
-func (item *Item) SetAttentionMovieName(name string) {
-	item.props.SetMust(item.inter, "AttentionMovieName", name)
 }
 
 func (item *Item) ToolTip() (iconName string, iconPixmap []image.Image, title, description string) {
@@ -269,17 +231,8 @@ func (item *Item) ToolTip() (iconName string, iconPixmap []image.Image, title, d
 	return tooltip.IconName, fromPixmaps(tooltip.IconPixmap), tooltip.Title, tooltip.Description
 }
 
-func (item *Item) SetToolTip(iconName string, iconPixmap []image.Image, title, description string) error {
-	item.props.SetMust(item.inter, "ToolTip", tooltip{IconName: iconName, IconPixmap: toPixmaps(iconPixmap), Title: title, Description: description})
-	return item.emit("NewToolTip")
-}
-
-func (item *Item) ItemIsMenu() bool {
+func (item *Item) IsMenu() bool {
 	return item.props.GetMust(item.inter, "ItemIsMenu").(bool)
-}
-
-func (item *Item) SetItemIsMenu(itemIsMenu bool) {
-	item.props.SetMust(item.inter, "ItemIsMenu", itemIsMenu)
 }
 
 func (item *Item) Menu() *Menu {
@@ -292,14 +245,6 @@ func (item *Item) Handler() Handler {
 		return nil
 	}
 	return *h
-}
-
-func (item *Item) SetHandler(handler Handler) {
-	p := &handler
-	if handler == nil {
-		p = nil
-	}
-	item.handler.Store(p)
 }
 
 type Category string
@@ -379,4 +324,128 @@ type tooltip struct {
 	IconName           string
 	IconPixmap         []pixmap
 	Title, Description string
+}
+
+type ItemProp func(*itemProps)
+
+type itemProps struct {
+	*Item
+	dirty []string
+}
+
+func (item *itemProps) mark(change string) {
+	if !slices.Contains(item.dirty, change) {
+		item.dirty = append(item.dirty, change)
+	}
+}
+
+func ItemCategory(category Category) ItemProp {
+	return func(item *itemProps) {
+		item.props.SetMust(item.inter, "Category", category)
+	}
+}
+
+func ItemID(id string) ItemProp {
+	return func(item *itemProps) {
+		item.props.SetMust(item.inter, "Id", id)
+	}
+}
+
+func ItemTitle(title string) ItemProp {
+	return func(item *itemProps) {
+		item.props.SetMust(item.inter, "Title", title)
+		item.mark("NewTitle")
+	}
+}
+
+func ItemStatus(status Status) ItemProp {
+	return func(item *itemProps) {
+		item.props.SetMust(item.inter, "Status", status)
+		item.mark("NewStatus")
+	}
+}
+
+func ItemWindowID(id uint32) ItemProp {
+	return func(item *itemProps) {
+		item.props.SetMust(item.inter, "WindowId", id)
+	}
+}
+
+func ItemIconName(name string) ItemProp {
+	return func(item *itemProps) {
+		item.props.SetMust(item.inter, "IconName", name)
+		item.mark("NewIcon")
+	}
+}
+
+func ItemIconPixmap(images ...image.Image) ItemProp {
+	return func(item *itemProps) {
+		item.props.SetMust(item.inter, "IconPixmap", toPixmaps(images))
+		item.mark("NewIcon")
+	}
+}
+
+func ItemIconAccessibleDesc(desc string) ItemProp {
+	return func(item *itemProps) {
+		item.props.SetMust(item.inter, "IconAccessibleDesc", desc)
+		item.mark("NewIcon")
+	}
+}
+
+func ItemOverlayIconName(name string) ItemProp {
+	return func(item *itemProps) {
+		item.props.SetMust(item.inter, "OverlayIconName", name)
+		item.mark("NewOverlayIcon")
+	}
+}
+
+func ItemOverlayIconPixmap(images ...image.Image) ItemProp {
+	return func(item *itemProps) {
+		item.props.SetMust(item.inter, "OverlayIconPixmap", toPixmaps(images))
+		item.mark("NewOverlayIcon")
+	}
+}
+
+func ItemAttentionIconName(name string) ItemProp {
+	return func(item *itemProps) {
+		item.props.SetMust(item.inter, "AttentionIconName", name)
+		item.mark("NewAttentionIcon")
+	}
+}
+
+func ItemAttentionIconPixmap(images ...image.Image) ItemProp {
+	return func(item *itemProps) {
+		item.props.SetMust(item.inter, "AttentionIconPixmap", toPixmaps(images))
+		item.mark("NewAttentionIcon")
+	}
+}
+
+func ItemAttentionMovieName(name string) ItemProp {
+	return func(item *itemProps) {
+		item.props.SetMust(item.inter, "AttentionMovieName", name)
+		item.mark("NewAttentionIcon")
+	}
+}
+
+func ItemToolTip(iconName string, iconPixmap []image.Image, title, description string) ItemProp {
+	return func(item *itemProps) {
+		item.props.SetMust(item.inter, "ToolTip", tooltip{IconName: iconName, IconPixmap: toPixmaps(iconPixmap), Title: title, Description: description})
+		item.mark("NewToolTip")
+	}
+}
+
+func ItemIsMenu(itemIsMenu bool) ItemProp {
+	return func(item *itemProps) {
+		item.props.SetMust(item.inter, "ItemIsMenu", itemIsMenu)
+	}
+}
+
+func ItemHandler(handler Handler) ItemProp {
+	return func(item *itemProps) {
+		p := &handler
+		if handler == nil {
+			p = nil
+		}
+		item.handler.Store(p)
+	}
 }
