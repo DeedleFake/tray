@@ -8,7 +8,7 @@ import (
 
 const (
 	menuPath  dbus.ObjectPath = "/StatusNotifierMenu"
-	menuInter                 = "com.canonical.dbusmenu"
+	menuInter string          = "com.canonical.dbusmenu"
 )
 
 type Menu struct {
