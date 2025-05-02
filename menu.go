@@ -240,13 +240,20 @@ func (menu *dbusmenu) EventGroup(events []menuEvent) ([]int, *dbus.Error) {
 
 func (menu *dbusmenu) AboutToShow(id int) (bool, *dbus.Error) {
 	log("menu method", "name", "AboutToShow", "id", id)
+
 	// TODO: Return true only if changes have happened.
-	return true, nil
+	return id == 0, nil
 }
 
 func (menu *dbusmenu) AboutToShowGroup(ids []int) ([]menuUpdate, []int, *dbus.Error) {
 	log("menu method", "name", "AboutToShowGroup", "ids", ids)
-	return nil, nil, nil
+
+	var updates []menuUpdate
+	for _, id := range ids {
+		// TODO: Return true only if changes have happened.
+		updates = append(updates, menuUpdate{ID: id, NeedUpdate: true})
+	}
+	return updates, nil, nil
 }
 
 type TextDirection string
