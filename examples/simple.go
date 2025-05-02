@@ -37,6 +37,7 @@ func main() {
 		tray.ItemTitle("Simple Example"),
 		tray.ItemIconPixmap(icon),
 		tray.ItemToolTip("", nil, "Simple Example", "A simple example of a tray icon."),
+		tray.ItemIsMenu(true),
 		tray.ItemHandler(tray.ActivateHandler(onTrayActivate)),
 	)
 	if err != nil {
