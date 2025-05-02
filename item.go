@@ -142,15 +142,7 @@ func (item *Item) exportIntrospect() error {
 }
 
 func (item *Item) Close() error {
-	reply, err := item.conn.ReleaseName(item.name)
-	if err != nil {
-		return err
-	}
-	if reply != dbus.ReleaseNameReplyReleased {
-		return fmt.Errorf("bad reply to name release: %v", reply)
-	}
-
-	return nil
+	return item.conn.Close()
 }
 
 func (item *Item) emit(name string) error {
