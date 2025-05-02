@@ -45,9 +45,11 @@ func (menu *Menu) AddItem(props ...MenuItemProp) (*MenuItem, error) {
 	item.m.Lock()
 	defer item.m.Unlock()
 
+	dirty, errs := item.applyProps(props)
+
 	menu.revision++
-	errs := item.applyProps(props, false)
 	errs = append(errs, menu.emitLayoutUpdated())
+	errs = append(errs, item.emitPropertiesUpdated(dirty))
 
 	return item, errors.Join(errs...)
 }
@@ -65,10 +67,12 @@ func (item *MenuItem) AddItem(props ...MenuItemProp) (*MenuItem, error) {
 	child.m.Lock()
 	defer child.m.Unlock()
 
-	child.menu.revision++
-	errs := child.applyProps(props, false)
+	dirty, errs := child.applyProps(props)
 	item.props["children-display"] = "submenu"
+
+	child.menu.revision++
 	errs = append(errs, item.emitLayoutUpdated())
+	errs = append(errs, item.emitPropertiesUpdated(dirty))
 
 	return child, errors.Join(errs...)
 }
@@ -102,17 +106,12 @@ func (item *MenuItem) Remove() {
 	parent.emitLayoutUpdated()
 }
 
-func (item *MenuItem) applyProps(props []MenuItemProp, emit bool) []error {
+func (item *MenuItem) applyProps(props []MenuItemProp) ([]string, []error) {
 	w := menuItemProps{MenuItem: item}
 	for _, p := range props {
 		p(&w)
 	}
-	if !emit {
-		return w.errs
-	}
-
-	w.errs = append(w.errs, item.emitPropertiesUpdated(w.dirty))
-	return w.errs
+	return w.dirty, w.errs
 }
 
 func (item *MenuItem) emitPropertiesUpdated(props []string) error {
@@ -237,7 +236,8 @@ func (item *MenuItem) SetProps(props ...MenuItemProp) error {
 	item.m.Lock()
 	defer item.m.Unlock()
 
-	errs := item.applyProps(props, true)
+	dirty, errs := item.applyProps(props)
+	errs = append(errs, item.emitPropertiesUpdated(dirty))
 	return errors.Join(errs...)
 }
 
