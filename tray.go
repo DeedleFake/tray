@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"slices"
-	"sync"
 	"sync/atomic"
 
 	"github.com/godbus/dbus/v5"
@@ -54,44 +53,13 @@ func makeConstProp[T any](v T) *prop.Prop {
 	return p
 }
 
-type lazy[T any] struct {
-	m  sync.RWMutex
-	v  T
-	ok bool
-}
-
-func (lazy *lazy[T]) Get(create func() (T, error)) (T, error) {
-	lazy.m.RLock()
-	if lazy.ok {
-		v := lazy.v
-		lazy.m.RUnlock()
-		return v, nil
+func mapSlice[K comparable, V any, M ~map[K]V](m M, s []K) M {
+	m2 := make(M, len(s))
+	for _, k := range s {
+		v, ok := m[k]
+		if ok {
+			m2[k] = v
+		}
 	}
-	lazy.m.RUnlock()
-
-	lazy.m.Lock()
-	defer lazy.m.Unlock()
-
-	if lazy.ok {
-		return lazy.v, nil
-	}
-
-	v, err := create()
-	if err != nil {
-		return v, err
-	}
-
-	lazy.v = v
-	lazy.ok = true
-
-	return v, nil
-}
-
-func (lazy *lazy[T]) Clear() {
-	lazy.m.Lock()
-	defer lazy.m.Unlock()
-
-	var zero T
-	lazy.v = zero
-	lazy.ok = false
+	return m2
 }

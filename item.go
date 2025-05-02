@@ -18,7 +18,7 @@ const itemPath dbus.ObjectPath = "/StatusNotifierItem"
 type Item struct {
 	conn               *dbus.Conn
 	props              *prop.Properties
-	menu               lazy[*Menu]
+	menu               *Menu
 	space, inter, name string
 	handler            atomic.Pointer[Handler]
 }
@@ -60,6 +60,11 @@ func (item *Item) export() error {
 	}
 
 	err = item.exportIntrospect()
+	if err != nil {
+		return err
+	}
+
+	err = item.createMenu()
 	if err != nil {
 		return err
 	}
@@ -266,6 +271,10 @@ func (item *Item) ItemIsMenu() bool {
 
 func (item *Item) SetItemIsMenu(itemIsMenu bool) {
 	item.props.SetMust(item.inter, "ItemIsMenu", itemIsMenu)
+}
+
+func (item *Item) Menu() *Menu {
+	return item.menu
 }
 
 func (item *Item) Handler() Handler {
