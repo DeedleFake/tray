@@ -35,7 +35,7 @@ func (menu *Menu) newItem(parent int) *MenuItem {
 	return &item
 }
 
-func (menu *Menu) AddItem(props ...MenuItemProp) (*MenuItem, error) {
+func (menu *Menu) AddChild(props ...MenuItemProp) (*MenuItem, error) {
 	defer menu.lock()()
 
 	child := menu.newItem(0)
@@ -50,7 +50,7 @@ func (menu *Menu) AddItem(props ...MenuItemProp) (*MenuItem, error) {
 	return child, errors.Join(errs...)
 }
 
-func (item *MenuItem) AddItem(props ...MenuItemProp) (*MenuItem, error) {
+func (item *MenuItem) AddChild(props ...MenuItemProp) (*MenuItem, error) {
 	defer item.menu.lock()()
 	defer item.lock()()
 

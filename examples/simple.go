@@ -47,7 +47,7 @@ func main() {
 	}
 	defer item.Close()
 
-	group, _ := item.Menu().AddItem(
+	group, _ := item.Menu().AddChild(
 		tray.MenuItemLabel("Edit"),
 	)
 
@@ -61,14 +61,14 @@ func main() {
 		})),
 	}
 
-	add, _ = group.AddItem(
+	add, _ = group.AddChild(
 		tray.MenuItemLabel("Add"),
 		tray.MenuItemEnabled(false),
 		tray.MenuItemHandler(tray.ClickedHandler(func(data any, timestamp uint32) error {
 			m.Lock()
 			defer m.Unlock()
 
-			p, _ = item.Menu().AddItem(props...)
+			p, _ = item.Menu().AddChild(props...)
 			p.MoveBefore(quit)
 			add.SetProps(tray.MenuItemEnabled(false))
 			remove.SetProps(tray.MenuItemEnabled(true))
@@ -76,7 +76,7 @@ func main() {
 		})),
 	)
 
-	remove, _ = group.AddItem(
+	remove, _ = group.AddChild(
 		tray.MenuItemLabel("Remove"),
 		tray.MenuItemHandler(tray.ClickedHandler(func(data any, timestamp uint32) error {
 			m.Lock()
@@ -89,13 +89,13 @@ func main() {
 		})),
 	)
 
-	item.Menu().AddItem(tray.MenuItemType(tray.Separator))
+	item.Menu().AddChild(tray.MenuItemType(tray.Separator))
 
 	m.Lock()
 
-	p, _ = item.Menu().AddItem(props...)
+	p, _ = item.Menu().AddChild(props...)
 
-	quit, _ = item.Menu().AddItem(
+	quit, _ = item.Menu().AddChild(
 		tray.MenuItemLabel("Quit"),
 		tray.MenuItemHandler(tray.ClickedHandler(func(data any, timestamp uint32) error {
 			close(done)
