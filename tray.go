@@ -67,20 +67,20 @@ func makeConstProp[T any](v T) *prop.Prop {
 	return p
 }
 
-func mapSlice[K comparable, V any, M ~map[K]V](m M, s []K) M {
-	if len(s) == 0 {
-		return m
-	}
-
-	m2 := make(M, len(s))
-	for _, k := range s {
-		v, ok := m[k]
-		if ok {
-			m2[k] = v
-		}
-	}
-	return m2
-}
+//func mapSlice[K comparable, V any, M ~map[K]V](m M, s []K) M {
+//	if len(s) == 0 {
+//		return m
+//	}
+//
+//	m2 := make(M, len(s))
+//	for _, k := range s {
+//		v, ok := m[k]
+//		if ok {
+//			m2[k] = v
+//		}
+//	}
+//	return m2
+//}
 
 func mapLookup[K comparable, V any](m map[K]any, k K, d V) V {
 	v, ok := m[k].(V)

@@ -241,10 +241,6 @@ func (item *MenuItem) SetProps(props ...MenuItemProp) error {
 
 	dirty, errs := item.applyProps(props)
 	errs = append(errs, item.emitPropertiesUpdated(dirty))
-
-	defer item.menu.lock()()
-	errs = append(errs, item.menu.updateLayout(item))
-
 	return errors.Join(errs...)
 }
 

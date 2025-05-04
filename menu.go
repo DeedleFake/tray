@@ -134,7 +134,16 @@ func (menu *dbusmenu) buildLayout(item *MenuItem, depth int, props []string) men
 		defer item.m.RUnlock()
 
 		id = item.id
-		properties = mapSlice(item.props, props)
+		//properties = mapSlice(item.props, props)
+		properties = item.props
+		// This is only supposed to send back the properties requested,
+		// but for some reason doing so causes things to not update
+		// correctly in GNOME. This is quite probably a bug in the
+		// StatusNotiferHost implementation and it's not asking for the
+		// correct properties based on other signals, or I'm not
+		// understanding something about the protocol, but just simply
+		// sending everything every time fixes it and that's what other
+		// implementations seem to do, so...
 	}
 
 	return menuLayout{
@@ -197,8 +206,9 @@ func (menu *dbusmenu) GetGroupProperties(ids []int, propertyNames []string) ([]m
 	for item := range items {
 		item.m.RLock()
 		r = append(r, menuProps{
-			ID:         item.id,
-			Properties: mapSlice(item.props, propertyNames),
+			ID: item.id,
+			//Properties: mapSlice(item.props, propertyNames),
+			Properties: item.props, // See buildLayout().
 		})
 		item.m.RUnlock()
 	}
