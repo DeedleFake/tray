@@ -36,74 +36,86 @@ func (menu *Menu) newItem(parent int) *MenuItem {
 }
 
 func (menu *Menu) AddItem(props ...MenuItemProp) (*MenuItem, error) {
-	menu.m.Lock()
-	defer menu.m.Unlock()
+	defer menu.lock()()
 
-	item := menu.newItem(0)
-	menu.children = append(menu.children, menu.id)
-
-	item.m.Lock()
-	defer item.m.Unlock()
-
-	dirty, errs := item.applyProps(props)
-
-	menu.revision++
-	errs = append(errs, menu.emitLayoutUpdated())
-	errs = append(errs, item.emitPropertiesUpdated(dirty))
-
-	return item, errors.Join(errs...)
-}
-
-func (item *MenuItem) AddItem(props ...MenuItemProp) (*MenuItem, error) {
-	item.menu.m.Lock()
-	defer item.menu.m.Unlock()
-
-	item.m.Lock()
-	defer item.m.Unlock()
-
-	child := item.menu.newItem(item.id)
-	item.children = append(item.children, child.id)
-
-	child.m.Lock()
-	defer child.m.Unlock()
+	child := menu.newItem(0)
+	defer child.lock()()
 
 	dirty, errs := child.applyProps(props)
-	item.props["children-display"] = "submenu"
+	errs = append(errs, menu.updateLayout(menu))
+	errs = append(errs, child.emitPropertiesUpdated(dirty))
 
-	child.menu.revision++
-	errs = append(errs, item.emitLayoutUpdated())
-	errs = append(errs, item.emitPropertiesUpdated(dirty))
+	menu.setChildren(append(menu.children, child.id))
 
 	return child, errors.Join(errs...)
 }
 
-func (item *MenuItem) Remove() {
-	item.menu.m.Lock()
-	defer item.menu.m.Unlock()
+func (item *MenuItem) AddItem(props ...MenuItemProp) (*MenuItem, error) {
+	defer item.menu.lock()()
+	defer item.lock()()
+
+	child := item.menu.newItem(item.id)
+	defer child.lock()()
+
+	dirty, errs := child.applyProps(props)
+	errs = append(errs, item.menu.updateLayout(item))
+	errs = append(errs, item.emitPropertiesUpdated(dirty))
+
+	item.setChildren(append(item.children, child.id))
+
+	return child, errors.Join(errs...)
+}
+
+func (item *MenuItem) Remove() error {
+	parent := item.getParent()
+	if parent == nil {
+		return nil
+	}
+	defer parent.lock()()
+
+	parent.setChildren(sliceRemove(parent.getChildren(), item.id))
+
+	if parent != item.menu {
+		defer item.menu.lock()()
+	}
 
 	delete(item.menu.nodes, item.id)
-	if item.parent == 0 {
-		item.menu.children = sliceRemove(item.menu.children, item.id)
-		item.menu.revision++
-		item.menu.emitLayoutUpdated()
-		return
+
+	return item.menu.updateLayout(parent)
+}
+
+func (item *MenuItem) MoveBefore(sibling *MenuItem) error {
+	dst := sibling.getParent()
+	src := item.getParent()
+	if dst == nil || src == nil {
+		return nil
 	}
 
-	parent := item.menu.nodes[item.parent]
-	if parent == nil {
-		return
+	defer dst.lock()()
+	if dst != src {
+		defer src.lock()()
 	}
 
-	parent.m.Lock()
-	defer parent.m.Unlock()
-
-	parent.children = sliceRemove(parent.children, item.id)
-	if len(parent.children) == 0 {
-		delete(parent.props, "children-display")
+	dc := dst.getChildren()
+	i := slices.Index(dc, sibling.id)
+	if i < 0 {
+		i = len(dc)
 	}
 
-	item.menu.revision++
-	parent.emitLayoutUpdated()
+	src.setChildren(sliceRemove(src.getChildren(), item.id))
+	dst.setChildren(slices.Insert(dc, i, item.id))
+	item.parent = dst.getID()
+
+	if dst != item.menu && src != item.menu {
+		defer item.menu.lock()()
+	}
+
+	updates := []menuNode{dst, src}
+	if dst == src {
+		updates = updates[:1]
+	}
+
+	return item.menu.updateLayout(updates...)
 }
 
 func (item *MenuItem) applyProps(props []MenuItemProp) ([]string, []error) {
@@ -147,43 +159,6 @@ func (item *MenuItem) emitPropertiesUpdated(props []string) error {
 		}},
 		[]removedProps(nil),
 	)
-}
-
-func (item *MenuItem) MoveBefore(sibling *MenuItem) error {
-	dst := sibling.getParent()
-	src := item.getParent()
-	if dst == nil || src == nil {
-		return nil
-	}
-
-	defer dst.lock()()
-	if dst != src {
-		defer src.lock()()
-	}
-
-	dc := dst.getChildren()
-	i := slices.Index(dc, sibling.id)
-	if i < 0 {
-		i = len(dc)
-	}
-
-	src.setChildren(sliceRemove(src.getChildren(), item.id))
-	dst.setChildren(slices.Insert(dc, i, item.id))
-	item.parent = dst.getID()
-
-	if dst != item.menu && src != item.menu {
-		item.menu.m.Lock()
-		defer item.menu.m.Unlock()
-	}
-	item.menu.revision++
-
-	var errs [2]error
-	errs[0] = dst.emitLayoutUpdated()
-	if dst != src {
-		errs[1] = src.emitLayoutUpdated()
-	}
-
-	return errors.Join(errs[:]...)
 }
 
 func (item *MenuItem) Type() MenuType {
@@ -262,8 +237,7 @@ func (item *MenuItem) VendorProp(vendor, prop string) (any, bool) {
 }
 
 func (item *MenuItem) SetProps(props ...MenuItemProp) error {
-	item.m.Lock()
-	defer item.m.Unlock()
+	defer item.lock()()
 
 	dirty, errs := item.applyProps(props)
 	errs = append(errs, item.emitPropertiesUpdated(dirty))
@@ -432,7 +406,6 @@ type menuNode interface {
 	getID() int
 	getChildren() []int
 	setChildren([]int)
-	emitLayoutUpdated() error
 }
 
 func (menu *Menu) lock() func() {
@@ -452,10 +425,6 @@ func (menu *Menu) setChildren(c []int) {
 	menu.children = c
 }
 
-func (menu *Menu) emitLayoutUpdated() error {
-	return menu.item.conn.Emit(menuPath, "com.canonical.dbusmenu.LayoutUpdated", menu.revision, 0)
-}
-
 func (item *MenuItem) lock() func() {
 	item.m.Lock()
 	return func() { item.m.Unlock() }
@@ -471,8 +440,9 @@ func (item *MenuItem) getChildren() []int {
 
 func (item *MenuItem) setChildren(c []int) {
 	item.children = c
-}
-
-func (item *MenuItem) emitLayoutUpdated() error {
-	return item.menu.item.conn.Emit(menuPath, "com.canonical.dbusmenu.LayoutUpdated", item.menu.revision, item.id)
+	if len(item.children) == 0 {
+		item.props["children-display"] = ""
+		return
+	}
+	item.props["children-display"] = "submenu"
 }

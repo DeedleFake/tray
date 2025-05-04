@@ -105,6 +105,18 @@ func (menu *Menu) exportIntrospect() error {
 	return menu.item.conn.Export(introspect.NewIntrospectable(&node), menuPath, "org.freedesktop.DBus.Introspectable")
 }
 
+func (menu *Menu) updateLayout(nodes ...menuNode) error {
+	menu.revision++
+
+	errs := make([]error, 0, len(nodes))
+	for _, node := range nodes {
+		err := menu.item.conn.Emit(menuPath, "com.canonical.dbusmenu.LayoutUpdated", menu.revision, node.getID())
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
+}
+
 func (menu *Menu) SetHandler(handler MenuEventHandler) {
 	menu.m.Lock()
 	defer menu.m.Unlock()
