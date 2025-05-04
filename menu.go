@@ -298,20 +298,12 @@ func (menu *dbusmenu) EventGroup(events []menuEvent) ([]int, *dbus.Error) {
 
 func (menu *dbusmenu) AboutToShow(id int) (bool, *dbus.Error) {
 	logger.Info("menu method", "name", "AboutToShow", "id", id)
-
-	// TODO: Return true only if changes have happened.
-	return id == 0, nil
+	return false, nil
 }
 
 func (menu *dbusmenu) AboutToShowGroup(ids []int) ([]menuUpdate, []int, *dbus.Error) {
 	logger.Info("menu method", "name", "AboutToShowGroup", "ids", ids)
-
-	var updates []menuUpdate
-	for _, id := range ids {
-		// TODO: Return true only if changes have happened.
-		updates = append(updates, menuUpdate{ID: id, NeedUpdate: true})
-	}
-	return updates, nil, nil
+	return nil, nil, nil
 }
 
 type TextDirection string
