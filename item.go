@@ -40,6 +40,12 @@ func New(props ...ItemProp) (*Item, error) {
 	item := Item{
 		conn: conn,
 	}
+
+	err = item.initProtoData()
+	if err != nil {
+		return nil, err
+	}
+
 	err = item.export(props)
 	if err != nil {
 		return nil, err
@@ -48,7 +54,7 @@ func New(props ...ItemProp) (*Item, error) {
 	return &item, nil
 }
 
-func (item *Item) export(props []ItemProp) error {
+func (item *Item) initProtoData() error {
 	space, err := getSpace(item.conn)
 	if err != nil {
 		return err
@@ -57,7 +63,22 @@ func (item *Item) export(props []ItemProp) error {
 	item.inter = fmt.Sprintf("org.%v.StatusNotifierItem", space)
 	item.name = getName(space)
 
-	err = item.conn.Export((*statusNotifierItem)(item), itemPath, item.inter)
+	reply, err := item.conn.RequestName(item.name, 0)
+	if err != nil || reply != dbus.RequestNameReplyPrimaryOwner {
+		// This error is non-fatal. Using a name with a specific format is
+		// essentially just a convention and is not necessary, so if it
+		// fails, this just falls back to the connection's unique
+		// identifier which is always available.
+		logErr("request name failed", "name", item.name, "reply", reply, "err", err)
+		item.name = item.conn.Names()[0]
+	}
+	log("name chosen initialized", "name", item.name)
+
+	return nil
+}
+
+func (item *Item) export(props []ItemProp) error {
+	err := item.conn.Export((*statusNotifierItem)(item), itemPath, item.inter)
 	if err != nil {
 		return err
 	}
@@ -82,19 +103,11 @@ func (item *Item) export(props []ItemProp) error {
 		return err
 	}
 
-	reply, err := item.conn.RequestName(item.name, 0)
-	if err != nil {
-		return err
-	}
-	if reply != dbus.RequestNameReplyPrimaryOwner {
-		return fmt.Errorf("bad reply to name request: %v", reply)
-	}
-
 	err = item.conn.Object(
-		fmt.Sprintf("org.%v.StatusNotifierWatcher", space),
+		fmt.Sprintf("org.%v.StatusNotifierWatcher", item.space),
 		"/StatusNotifierWatcher",
 	).Call(
-		fmt.Sprintf("org.%v.StatusNotifierWatcher.RegisterStatusNotifierItem", space),
+		fmt.Sprintf("org.%v.StatusNotifierWatcher.RegisterStatusNotifierItem", item.space),
 		0,
 		item.name,
 	).Store()
