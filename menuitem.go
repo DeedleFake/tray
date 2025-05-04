@@ -149,40 +149,6 @@ func (item *MenuItem) emitPropertiesUpdated(props []string) error {
 	)
 }
 
-func (menu *Menu) lock() func() {
-	menu.m.Lock()
-	return func() { menu.m.Unlock() }
-}
-
-func (menu *Menu) getChildren() []int {
-	return menu.children
-}
-
-func (menu *Menu) setChildren(c []int) {
-	menu.children = c
-}
-
-func (menu *Menu) emitLayoutUpdated() error {
-	return menu.item.conn.Emit(menuPath, "com.canonical.dbusmenu.LayoutUpdated", menu.revision, 0)
-}
-
-func (item *MenuItem) lock() func() {
-	item.m.Lock()
-	return func() { item.m.Unlock() }
-}
-
-func (item *MenuItem) getChildren() []int {
-	return item.children
-}
-
-func (item *MenuItem) setChildren(c []int) {
-	item.children = c
-}
-
-func (item *MenuItem) emitLayoutUpdated() error {
-	return item.menu.item.conn.Emit(menuPath, "com.canonical.dbusmenu.LayoutUpdated", item.menu.revision, item.id)
-}
-
 func (item *MenuItem) MoveBefore(sibling *MenuItem) error {
 	dst := sibling.getParent()
 	src := item.getParent()
@@ -203,6 +169,7 @@ func (item *MenuItem) MoveBefore(sibling *MenuItem) error {
 
 	src.setChildren(sliceRemove(src.getChildren(), item.id))
 	dst.setChildren(slices.Insert(dc, i, item.id))
+	item.parent = dst.getID()
 
 	if dst != item.menu && src != item.menu {
 		item.menu.m.Lock()
@@ -445,14 +412,7 @@ func ClickedHandler(handler func(data any, timestamp uint32) error) MenuEventHan
 	}
 }
 
-type parent interface {
-	lock() func()
-	getChildren() []int
-	setChildren([]int)
-	emitLayoutUpdated() error
-}
-
-func (item *MenuItem) getParent() parent {
+func (item *MenuItem) getParent() menuNode {
 	if item.parent == 0 {
 		return item.menu
 	}
@@ -465,4 +425,54 @@ func (item *MenuItem) getParent() parent {
 		return nil
 	}
 	return p
+}
+
+type menuNode interface {
+	lock() func()
+	getID() int
+	getChildren() []int
+	setChildren([]int)
+	emitLayoutUpdated() error
+}
+
+func (menu *Menu) lock() func() {
+	menu.m.Lock()
+	return func() { menu.m.Unlock() }
+}
+
+func (menu *Menu) getID() int {
+	return 0
+}
+
+func (menu *Menu) getChildren() []int {
+	return menu.children
+}
+
+func (menu *Menu) setChildren(c []int) {
+	menu.children = c
+}
+
+func (menu *Menu) emitLayoutUpdated() error {
+	return menu.item.conn.Emit(menuPath, "com.canonical.dbusmenu.LayoutUpdated", menu.revision, 0)
+}
+
+func (item *MenuItem) lock() func() {
+	item.m.Lock()
+	return func() { item.m.Unlock() }
+}
+
+func (item *MenuItem) getID() int {
+	return item.id
+}
+
+func (item *MenuItem) getChildren() []int {
+	return item.children
+}
+
+func (item *MenuItem) setChildren(c []int) {
+	item.children = c
+}
+
+func (item *MenuItem) emitLayoutUpdated() error {
+	return item.menu.item.conn.Emit(menuPath, "com.canonical.dbusmenu.LayoutUpdated", item.menu.revision, item.id)
 }
