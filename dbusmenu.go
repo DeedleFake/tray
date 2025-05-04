@@ -13,7 +13,8 @@ import (
 // on both the [Menu] and on [MenuItem]. It is given a MenuEventID
 // that identifies the type of event, such as [Clicked], arbitrary
 // data that is associated with the event, and a timestamp. The
-// timestamp may be the zero value.
+// timestamp corresponds to an internal time value of the sender and
+// is not a specific absolute point in time.
 //
 // The error returned by the handler is sent as a response to the
 // D-Bus call that triggered it, so in a lot of cases it is more

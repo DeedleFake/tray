@@ -8,7 +8,6 @@ import (
 	"image/png"
 	"slices"
 	"sync"
-	"time"
 )
 
 type MenuItem struct {
@@ -163,12 +162,12 @@ func (item *MenuItem) emitPropertiesUpdated(props []string) error {
 	)
 }
 
-func (item *MenuItem) RequestActivation() error {
+func (item *MenuItem) RequestActivation(timestamp uint32) error {
 	return item.menu.item.conn.Emit(
 		menuPath,
 		"com.canonical.dbusmenu.ItemActivationRequested",
 		item.id,
-		uint32(time.Now().Unix()),
+		timestamp,
 	)
 }
 
