@@ -152,7 +152,7 @@ func (menu *dbusmenu) buildChildren(parent *MenuItem, depth int, props []string)
 }
 
 func (menu *dbusmenu) GetLayout(parentID int, recursionDepth int, propertyNames []string) (revision uint32, layout menuLayout, derr *dbus.Error) {
-	log("menu method", "name", "GetLayout", "parentID", parentID, "propertyNames", propertyNames)
+	logger.Info("menu method", "name", "GetLayout", "parentID", parentID, "propertyNames", propertyNames)
 
 	menu.m.RLock()
 	defer menu.m.RUnlock()
@@ -162,7 +162,7 @@ func (menu *dbusmenu) GetLayout(parentID int, recursionDepth int, propertyNames 
 }
 
 func (menu *dbusmenu) GetGroupProperties(ids []int, propertyNames []string) ([]menuProps, *dbus.Error) {
-	log("menu method", "name", "GetGroupProperties", "ids", ids, "propertyNames", propertyNames)
+	logger.Info("menu method", "name", "GetGroupProperties", "ids", ids, "propertyNames", propertyNames)
 
 	menu.m.RLock()
 	defer menu.m.RUnlock()
@@ -192,7 +192,7 @@ func (menu *dbusmenu) GetGroupProperties(ids []int, propertyNames []string) ([]m
 }
 
 func (menu *dbusmenu) GetProperty(id int, name string) (any, *dbus.Error) {
-	log("menu method", "name", "GetProperty", "id", id, "name", name)
+	logger.Info("menu method", "name", "GetProperty", "id", id, "name", name)
 
 	menu.m.RLock()
 	defer menu.m.RUnlock()
@@ -228,7 +228,7 @@ func (menu *dbusmenu) getHandler(id int) MenuEventHandler {
 }
 
 func (menu *dbusmenu) Event(id int, eventID MenuEventID, data dbus.Variant, timestamp uint32) *dbus.Error {
-	log("menu method", "name", "Event", "id", id, "eventID", eventID, "data", data, "timestamp", timestamp)
+	logger.Info("menu method", "name", "Event", "id", id, "eventID", eventID, "data", data, "timestamp", timestamp)
 
 	h := menu.getHandler(id)
 	if h == nil {
@@ -243,19 +243,19 @@ func (menu *dbusmenu) Event(id int, eventID MenuEventID, data dbus.Variant, time
 }
 
 func (menu *dbusmenu) EventGroup(events []menuEvent) ([]int, *dbus.Error) {
-	log("menu method", "name", "EventGroup", "events", events)
+	logger.Info("menu method", "name", "EventGroup", "events", events)
 	return nil, nil
 }
 
 func (menu *dbusmenu) AboutToShow(id int) (bool, *dbus.Error) {
-	log("menu method", "name", "AboutToShow", "id", id)
+	logger.Info("menu method", "name", "AboutToShow", "id", id)
 
 	// TODO: Return true only if changes have happened.
 	return id == 0, nil
 }
 
 func (menu *dbusmenu) AboutToShowGroup(ids []int) ([]menuUpdate, []int, *dbus.Error) {
-	log("menu method", "name", "AboutToShowGroup", "ids", ids)
+	logger.Info("menu method", "name", "AboutToShowGroup", "ids", ids)
 
 	var updates []menuUpdate
 	for _, id := range ids {

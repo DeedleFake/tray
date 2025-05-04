@@ -7,6 +7,7 @@ package tray
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"slices"
 	"sync/atomic"
@@ -14,6 +15,14 @@ import (
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/prop"
 )
+
+var logger = slog.With("TRAY_DEBUG", 1)
+
+func init() {
+	if os.Getenv("TRAY_DEBUG") != "1" {
+		logger = slog.New(slog.DiscardHandler)
+	}
+}
 
 var id uint64
 

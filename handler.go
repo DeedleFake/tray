@@ -38,7 +38,7 @@ func (item *statusNotifierItem) Handler() Handler {
 }
 
 func (item *statusNotifierItem) ContextMenu(x, y int) *dbus.Error {
-	log("item method", "name", "ContextMenu", "x", x, "y", y)
+	logger.Info("item method", "name", "ContextMenu", "x", x, "y", y)
 
 	handler := item.Handler()
 	if handler == nil {
@@ -52,7 +52,7 @@ func (item *statusNotifierItem) ContextMenu(x, y int) *dbus.Error {
 }
 
 func (item *statusNotifierItem) Activate(x, y int) *dbus.Error {
-	log("item method", "name", "Activate", "x", x, "y", y)
+	logger.Info("item method", "name", "Activate", "x", x, "y", y)
 
 	handler := item.Handler()
 	if handler == nil {
@@ -66,7 +66,7 @@ func (item *statusNotifierItem) Activate(x, y int) *dbus.Error {
 }
 
 func (item *statusNotifierItem) SecondaryActivate(x, y int) *dbus.Error {
-	log("item method", "name", "SecondaryActivate", "x", x, "y", y)
+	logger.Info("item method", "name", "SecondaryActivate", "x", x, "y", y)
 
 	handler := item.Handler()
 	if handler == nil {
@@ -80,7 +80,7 @@ func (item *statusNotifierItem) SecondaryActivate(x, y int) *dbus.Error {
 }
 
 func (item *statusNotifierItem) Scroll(delta int, orientation Orientation) *dbus.Error {
-	log("item method", "name", "Scroll", "delta", delta, "orientation", orientation)
+	logger.Info("item method", "name", "Scroll", "delta", delta, "orientation", orientation)
 
 	handler := item.Handler()
 	if handler == nil {

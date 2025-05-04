@@ -69,10 +69,10 @@ func (item *Item) initProtoData() error {
 		// essentially just a convention and is not necessary, so if it
 		// fails, this just falls back to the connection's unique
 		// identifier which is always available.
-		logErr("request name failed", "name", item.name, "reply", reply, "err", err)
+		logger.Warn("request name failed", "name", item.name, "reply", reply, "err", err)
 		item.name = item.conn.Names()[0]
 	}
-	log("name chosen initialized", "name", item.name)
+	logger.Info("name chosen", "name", item.name)
 
 	return nil
 }
