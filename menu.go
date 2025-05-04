@@ -2,6 +2,7 @@ package tray
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 	"strings"
 	"sync"
@@ -200,13 +201,18 @@ func (menu *dbusmenu) GetProperty(id int, name string) (any, *dbus.Error) {
 
 	item := menu.nodes[id]
 	if item == nil {
-		return nil, nil
+		return nil, dbus.MakeFailedError(fmt.Errorf("menu item with ID %v not found", id))
 	}
 
 	item.m.RLock()
 	defer item.m.RUnlock()
 
-	return item.props[name], nil
+	v := item.props[name]
+	if v == nil {
+		return nil, dbus.MakeFailedError(fmt.Errorf("property %q not found", name))
+	}
+
+	return v, nil
 }
 
 func (menu *dbusmenu) getHandler(id int) MenuEventHandler {
