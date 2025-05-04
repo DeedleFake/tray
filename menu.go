@@ -1,6 +1,7 @@
 package tray
 
 import (
+	"errors"
 	"maps"
 	"strings"
 	"sync"
@@ -227,15 +228,19 @@ func (menu *dbusmenu) getHandler(id int) MenuEventHandler {
 	return item.handler
 }
 
-func (menu *dbusmenu) Event(id int, eventID MenuEventID, data dbus.Variant, timestamp uint32) *dbus.Error {
-	logger.Info("menu method", "name", "Event", "id", id, "eventID", eventID, "data", data, "timestamp", timestamp)
-
+func (menu *dbusmenu) event(id int, eventID MenuEventID, data dbus.Variant, timestamp uint32) error {
 	h := menu.getHandler(id)
 	if h == nil {
 		return nil
 	}
 
-	err := h(eventID, data.Value(), timestamp)
+	return h(eventID, data.Value(), timestamp)
+}
+
+func (menu *dbusmenu) Event(id int, eventID MenuEventID, data dbus.Variant, timestamp uint32) *dbus.Error {
+	logger.Info("menu method", "name", "Event", "id", id, "eventID", eventID, "data", data, "timestamp", timestamp)
+
+	err := menu.event(id, eventID, data, timestamp)
 	if err != nil {
 		return dbus.MakeFailedError(err)
 	}
@@ -244,7 +249,23 @@ func (menu *dbusmenu) Event(id int, eventID MenuEventID, data dbus.Variant, time
 
 func (menu *dbusmenu) EventGroup(events []menuEvent) ([]int, *dbus.Error) {
 	logger.Info("menu method", "name", "EventGroup", "events", events)
-	return nil, nil
+
+	ids := make([]int, 0, len(events))
+	errs := make([]error, 0, len(events))
+	for _, event := range events {
+		err := menu.event(event.ID, event.EventID, event.Data, event.Timestamp)
+		if err != nil {
+			ids = append(ids, event.ID)
+			errs = append(errs, err)
+		}
+	}
+
+	err := errors.Join(errs...)
+	if err != nil {
+		return ids, dbus.MakeFailedError(err)
+	}
+
+	return ids, nil
 }
 
 func (menu *dbusmenu) AboutToShow(id int) (bool, *dbus.Error) {
@@ -316,7 +337,7 @@ type menuProps struct {
 type menuEvent struct {
 	ID        int
 	EventID   MenuEventID
-	Data      any
+	Data      dbus.Variant
 	Timestamp uint32
 }
 

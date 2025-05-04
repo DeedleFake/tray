@@ -103,14 +103,11 @@ func (item *Item) export(props []ItemProp) error {
 		return err
 	}
 
+	method := fmt.Sprintf("org.%v.StatusNotifierWatcher.RegisterStatusNotifierItem", item.space)
 	err = item.conn.Object(
 		fmt.Sprintf("org.%v.StatusNotifierWatcher", item.space),
 		"/StatusNotifierWatcher",
-	).Call(
-		fmt.Sprintf("org.%v.StatusNotifierWatcher.RegisterStatusNotifierItem", item.space),
-		0,
-		item.name,
-	).Store()
+	).Call(method, 0, item.name).Store()
 	if err != nil {
 		return err
 	}
