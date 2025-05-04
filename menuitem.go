@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"slices"
 	"sync"
+	"time"
 )
 
 type MenuItem struct {
@@ -88,6 +89,7 @@ func (item *MenuItem) MoveBefore(sibling *MenuItem) error {
 	dst := sibling.getParent()
 	src := item.getParent()
 	if dst == nil || src == nil {
+		// TODO: Allow moving children who have previously been removed?
 		return nil
 	}
 
@@ -158,6 +160,15 @@ func (item *MenuItem) emitPropertiesUpdated(props []string) error {
 			Props: updated,
 		}},
 		[]removedProps(nil),
+	)
+}
+
+func (item *MenuItem) RequestActivation() error {
+	return item.menu.item.conn.Emit(
+		menuPath,
+		"com.canonical.dbusmenu.ItemActivationRequested",
+		item.id,
+		uint32(time.Now().Unix()),
 	)
 }
 
