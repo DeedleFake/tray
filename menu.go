@@ -14,6 +14,8 @@ const (
 	menuInter string          = "com.canonical.dbusmenu"
 )
 
+// Menu is the menu for a StatusNotifierItem as specififed by the
+// dbusmenu interface. An instance of it is available via [Item.Menu].
 type Menu struct {
 	item  *Item
 	props *prop.Properties
@@ -114,6 +116,9 @@ func (menu *Menu) updateLayout(nodes ...menuNode) error {
 	return errors.Join(errs...)
 }
 
+// SetHandler sets the MenuEventHandler that is called when the menu
+// receives incoming events. Generally speaking, clients will probably
+// want to set handlers on [MenuItem], not on the Menu itself.
 func (menu *Menu) SetHandler(handler MenuEventHandler) {
 	menu.m.Lock()
 	defer menu.m.Unlock()

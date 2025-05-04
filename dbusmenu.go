@@ -9,8 +9,24 @@ import (
 	"github.com/godbus/dbus/v5"
 )
 
+// MenuEventHandler is a function that is called in response to events
+// on both the [Menu] and on [MenuItem]. It is given a MenuEventID
+// that identifies the type of event, such as [Clicked], arbitrary
+// data that is associated with the event, and a timestamp. The
+// timestamp may be the zero value.
+//
+// The error returned by the handler is sent as a response to the
+// D-Bus call that triggered it, so in a lot of cases it is more
+// useful to handle an error locally in some way and then return nil
+// from the handler regardless.
+//
+// For the simple common case of handling specifically [Clicked]
+// events, see [ClickedHandler].
 type MenuEventHandler func(eventID MenuEventID, data any, timestamp uint32) error
 
+// ClickedHandler is a convenience function that returns a
+// MenuEventHandler that calls handler if and only if the event ID is
+// [Clicked].
 func ClickedHandler(handler func(data any, timestamp uint32) error) MenuEventHandler {
 	return func(eventID MenuEventID, data any, timestamp uint32) error {
 		if eventID == Clicked {
