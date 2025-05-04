@@ -274,8 +274,6 @@ func (state MenuToggleState) Indeterminate() bool {
 	return state != Off && state != On
 }
 
-type MenuEventHandler func(eventID MenuEventID, data any, timestamp uint32) error
-
 type MenuItemProp func(*menuItemProps)
 
 type menuItemProps struct {
@@ -381,15 +379,6 @@ func vendorPropName(vendor, prop string) string {
 	return fmt.Sprintf("x-%v-%v", vendor, prop)
 }
 
-func ClickedHandler(handler func(data any, timestamp uint32) error) MenuEventHandler {
-	return func(eventID MenuEventID, data any, timestamp uint32) error {
-		if eventID == Clicked {
-			return handler(data, timestamp)
-		}
-		return nil
-	}
-}
-
 func (item *MenuItem) getParent() menuNode {
 	if item.parent == 0 {
 		return item.menu
@@ -403,30 +392,6 @@ func (item *MenuItem) getParent() menuNode {
 		return nil
 	}
 	return p
-}
-
-type menuNode interface {
-	lock() func()
-	getID() int
-	getChildren() []int
-	setChildren([]int)
-}
-
-func (menu *Menu) lock() func() {
-	menu.m.Lock()
-	return func() { menu.m.Unlock() }
-}
-
-func (menu *Menu) getID() int {
-	return 0
-}
-
-func (menu *Menu) getChildren() []int {
-	return menu.children
-}
-
-func (menu *Menu) setChildren(c []int) {
-	menu.children = c
 }
 
 func (item *MenuItem) lock() func() {
