@@ -21,7 +21,7 @@ type Menu struct {
 
 	m        sync.RWMutex
 	id       int
-	layout   map[int]*MenuItem
+	nodes    map[int]*MenuItem
 	children []int
 	revision uint32
 	handler  MenuEventHandler
@@ -29,8 +29,8 @@ type Menu struct {
 
 func (item *Item) createMenu() error {
 	item.menu = &Menu{
-		item:   item,
-		layout: make(map[int]*MenuItem),
+		item:  item,
+		nodes: make(map[int]*MenuItem),
 	}
 	return item.menu.export()
 }
@@ -142,7 +142,7 @@ func (menu *dbusmenu) buildChildren(parent *MenuItem, depth int, props []string)
 
 	children := make([]any, 0, len(ids))
 	for _, id := range ids {
-		child := menu.layout[id]
+		child := menu.nodes[id]
 		if child != nil {
 			children = append(children, menu.buildLayout(child, depth-1, props))
 		}
@@ -167,11 +167,11 @@ func (menu *dbusmenu) GetGroupProperties(ids []int, propertyNames []string) ([]m
 	menu.m.RLock()
 	defer menu.m.RUnlock()
 
-	items := maps.Values(menu.layout)
+	items := maps.Values(menu.nodes)
 	if len(ids) != 0 {
 		items = func(yield func(*MenuItem) bool) {
 			for _, id := range ids {
-				item := menu.layout[id]
+				item := menu.nodes[id]
 				if item != nil && !yield(item) {
 					return
 				}
@@ -197,7 +197,7 @@ func (menu *dbusmenu) GetProperty(id int, name string) (any, *dbus.Error) {
 	menu.m.RLock()
 	defer menu.m.RUnlock()
 
-	item := menu.layout[id]
+	item := menu.nodes[id]
 	if item == nil {
 		return nil, nil
 	}
@@ -216,7 +216,7 @@ func (menu *dbusmenu) getHandler(id int) MenuEventHandler {
 		return menu.handler
 	}
 
-	item := menu.layout[id]
+	item := menu.nodes[id]
 	if item == nil {
 		return nil
 	}

@@ -30,7 +30,7 @@ func (menu *Menu) newItem(parent int) *MenuItem {
 		props:  make(map[string]any),
 	}
 
-	menu.layout[item.id] = &item
+	menu.nodes[item.id] = &item
 
 	return &item
 }
@@ -81,7 +81,7 @@ func (item *MenuItem) Remove() {
 	item.menu.m.Lock()
 	defer item.menu.m.Unlock()
 
-	delete(item.menu.layout, item.id)
+	delete(item.menu.nodes, item.id)
 	if item.parent == 0 {
 		item.menu.children = sliceRemove(item.menu.children, item.id)
 		item.menu.revision++
@@ -89,7 +89,7 @@ func (item *MenuItem) Remove() {
 		return
 	}
 
-	parent := item.menu.layout[item.parent]
+	parent := item.menu.nodes[item.parent]
 	if parent == nil {
 		return
 	}
@@ -420,7 +420,7 @@ func (item *MenuItem) getParent() menuNode {
 	item.menu.m.RLock()
 	defer item.menu.m.RUnlock()
 
-	p, ok := item.menu.layout[item.parent]
+	p, ok := item.menu.nodes[item.parent]
 	if !ok {
 		return nil
 	}
