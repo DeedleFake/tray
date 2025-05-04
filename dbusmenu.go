@@ -219,6 +219,8 @@ func (menu *dbusmenu) AboutToShowGroup(ids []int) ([]menuUpdate, []int, *dbus.Er
 	return nil, nil, nil
 }
 
+// TextDirection represents the possible configurations a menu's text
+// direction.
 type TextDirection string
 
 const (
@@ -226,6 +228,7 @@ const (
 	RightToLeft TextDirection = "rtl"
 )
 
+// MenuStatus is the possible statuses of a menu.
 type MenuStatus string
 
 const (

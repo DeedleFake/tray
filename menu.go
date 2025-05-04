@@ -116,14 +116,46 @@ func (menu *Menu) updateLayout(nodes ...menuNode) error {
 	return errors.Join(errs...)
 }
 
-// SetHandler sets the MenuEventHandler that is called when the menu
-// receives incoming events. Generally speaking, clients will probably
-// want to set handlers on [MenuItem], not on the Menu itself.
-func (menu *Menu) SetHandler(handler MenuEventHandler) {
-	menu.m.Lock()
-	defer menu.m.Unlock()
+func (menu *Menu) TextDirection() TextDirection {
+	return menu.props.GetMust(menuInter, "TextDirection").(TextDirection)
+}
 
-	menu.handler = handler
+func (menu *Menu) Status() MenuStatus {
+	return menu.props.GetMust(menuInter, "Status").(MenuStatus)
+}
+
+func (menu *Menu) IconThemePath() []string {
+	return menu.props.GetMust(menuInter, "IconThemePath").([]string)
+}
+
+func ItemMenuTextDirection(direction TextDirection) ItemProp {
+	return func(item *itemProps) {
+		item.menu.props.SetMust(menuInter, "TextDirection", direction)
+	}
+}
+
+func ItemMenuStatus(status MenuStatus) ItemProp {
+	return func(item *itemProps) {
+		item.menu.props.SetMust(menuInter, "Status", status)
+	}
+}
+
+func ItemMenuIconThemePath(path []string) ItemProp {
+	return func(item *itemProps) {
+		item.menu.props.SetMust(menuInter, "IconThemePath", path)
+	}
+}
+
+// ItemMenuHandler sets the MenuEventHandler that is called when the
+// menu receives incoming events. Generally speaking, clients will
+// probably want to set handlers on [MenuItem], not on the Menu
+// itself.
+func ItemMenuHandler(handler MenuEventHandler) ItemProp {
+	return func(item *itemProps) {
+		defer item.menu.lock()()
+
+		item.menu.handler = handler
+	}
 }
 
 type menuNode interface {
