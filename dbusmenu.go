@@ -53,7 +53,7 @@ func (menu *dbusmenu) buildLayout(item *MenuItem, depth int, props []string) men
 
 	return menuLayout{
 		ID:         item.id,
-		Properties: mapSlice(item.props, props),
+		Properties: mapSlice(item.props, nil), // Workaround for possible bug in the GNOME extension.
 		Children:   menu.buildChildren(item, depth, props),
 	}
 }
@@ -125,7 +125,7 @@ func (menu *dbusmenu) GetGroupProperties(ids []int, propertyNames []string) ([]m
 		item.m.RLock()
 		r = append(r, menuProps{
 			ID:         item.id,
-			Properties: mapSlice(item.props, propertyNames),
+			Properties: mapSlice(item.props, nil), // Workaround for possible bug in the GNOME extension.
 		})
 		item.m.RUnlock()
 	}
