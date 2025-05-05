@@ -40,28 +40,30 @@ func ClickedHandler(handler func(data any, timestamp uint32) error) MenuEventHan
 type dbusmenu Menu
 
 func (menu *dbusmenu) buildLayout(item *MenuItem, depth int, props []string) menuLayout {
-	var id int
-	properties := map[string]any{"children-display": "submenu"}
-	if item != nil {
-		item.m.RLock()
-		defer item.m.RUnlock()
-
-		id = item.id
-		//properties = mapSlice(item.props, props)
-		properties = item.props
-		// This is only supposed to send back the properties requested,
-		// but for some reason doing so causes things to not update
-		// correctly in GNOME. This is quite probably a bug in the
-		// StatusNotiferHost implementation and it's not asking for the
-		// correct properties based on other signals, or I'm not
-		// understanding something about the protocol, but just simply
-		// sending everything every time fixes it and that's what other
-		// implementations seem to do, so...
+	if item == nil {
+		return menuLayout{
+			ID:         0,
+			Properties: map[string]any{"children-display": "submenu"},
+			Children:   menu.buildChildren(item, depth, props),
+		}
 	}
 
+	// This is only supposed to send back the properties requested,
+	// but for some reason doing so causes things to not update
+	// correctly in GNOME. This is quite probably a bug in the
+	// StatusNotiferHost implementation and it's not asking for the
+	// correct properties based on other signals, or I'm not
+	// understanding something about the protocol, but just simply
+	// sending everything every time fixes it and that's what other
+	// implementations seem to do, so...
+
+	item.m.RLock()
+	defer item.m.RUnlock()
+
 	return menuLayout{
-		ID:         id,
-		Properties: properties,
+		ID: item.id,
+		//Properties: mapSlice(item.props, props),
+		Properties: maps.Clone(item.props),
 		Children:   menu.buildChildren(item, depth, props),
 	}
 }
@@ -93,7 +95,15 @@ func (menu *dbusmenu) GetLayout(parentID int, recursionDepth int, propertyNames 
 	menu.m.RLock()
 	defer menu.m.RUnlock()
 
-	layout = menu.buildLayout(nil, recursionDepth, propertyNames)
+	var parent *MenuItem
+	if parentID != 0 {
+		parent = menu.nodes[parentID]
+		if parent == nil {
+			return menu.revision, menuLayout{}, dbus.MakeFailedError(fmt.Errorf("unknown node with ID %v", parentID))
+		}
+	}
+
+	layout = menu.buildLayout(parent, recursionDepth, propertyNames)
 	return menu.revision, layout, nil
 }
 
@@ -121,7 +131,7 @@ func (menu *dbusmenu) GetGroupProperties(ids []int, propertyNames []string) ([]m
 		r = append(r, menuProps{
 			ID: item.id,
 			//Properties: mapSlice(item.props, propertyNames),
-			Properties: item.props, // See buildLayout().
+			Properties: maps.Clone(item.props), // See buildLayout().
 		})
 		item.m.RUnlock()
 	}
