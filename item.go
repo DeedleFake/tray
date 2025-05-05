@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/draw"
+	"os"
 	"slices"
 	"sync/atomic"
 
@@ -15,16 +16,49 @@ import (
 	"github.com/godbus/dbus/v5/prop"
 )
 
-const itemPath dbus.ObjectPath = "/StatusNotifierItem"
+const (
+	itemPath   dbus.ObjectPath = "/StatusNotifierItem"
+	itemInter                  = "org.freedesktop.StatusNotifierItem"
+	itemInter2                 = "org.kde.StatusNotifierItem"
+)
+
+var (
+	spaces     = [...]string{"freedesktop", "kde"}
+	itemInters = [...]string{itemInter, itemInter2}
+
+	itemPropsData = map[string]*prop.Prop{
+		"Category":            makeProp(ApplicationStatus),
+		"Id":                  makeProp(""),
+		"Title":               makeProp(""),
+		"Status":              makeProp(Active),
+		"WindowId":            makeProp(uint32(0)),
+		"IconName":            makeProp(""),
+		"IconPixmap":          makeProp[[]pixmap](nil),
+		"IconAccessibleDesc":  makeProp(""),
+		"OverlayIconName":     makeProp(""),
+		"OverlayIconPixmap":   makeProp[[]pixmap](nil),
+		"AttentionIconName":   makeProp(""),
+		"AttentionIconPixmap": makeProp[[]pixmap](nil),
+		"AttentionMovieName":  makeProp(""),
+		"ToolTip":             makeProp(tooltip{}),
+		"ItemIsMenu":          makeProp(false),
+		"Menu":                makeConstProp(menuPath),
+	}
+
+	itemPropsMap = prop.Map{
+		itemInter:  itemPropsData,
+		itemInter2: itemPropsData,
+	}
+)
 
 // Item is a single StatusNotifierItem. Each item roughly corresponds
 // to a single icon in the system tray.
 type Item struct {
-	conn               *dbus.Conn
-	props              *prop.Properties
-	menu               *Menu
-	space, inter, name string
-	handler            atomic.Pointer[Handler]
+	conn      *dbus.Conn
+	props     *prop.Properties
+	menu      *Menu
+	snw, name string
+	handler   atomic.Pointer[Handler]
 }
 
 // New creates a new Item configured with the given props. It is
@@ -56,13 +90,7 @@ func New(props ...ItemProp) (*Item, error) {
 }
 
 func (item *Item) initProtoData() error {
-	space, err := getSpace(item.conn)
-	if err != nil {
-		return fmt.Errorf("get namespace: %w", err)
-	}
-	item.space = space
-	item.inter = fmt.Sprintf("org.%v.StatusNotifierItem", space)
-	item.name = getName(space)
+	item.name = getName()
 
 	reply, err := item.conn.RequestName(item.name, 0)
 	if err != nil || reply != dbus.RequestNameReplyPrimaryOwner {
@@ -79,9 +107,14 @@ func (item *Item) initProtoData() error {
 }
 
 func (item *Item) export(props []ItemProp) error {
-	err := item.conn.Export((*statusNotifierItem)(item), itemPath, item.inter)
+	err := item.conn.Export((*statusNotifierItem)(item), itemPath, itemInter)
 	if err != nil {
-		return fmt.Errorf("export methods: %w", err)
+		return fmt.Errorf("export methods as %v: %w", itemInter, err)
+	}
+
+	err = item.conn.Export((*statusNotifierItem)(item), itemPath, itemInter2)
+	if err != nil {
+		return fmt.Errorf("export methods as %v: %w", itemInter2, err)
 	}
 
 	err = item.exportProps()
@@ -104,39 +137,25 @@ func (item *Item) export(props []ItemProp) error {
 		return fmt.Errorf("set properties: %w", err)
 	}
 
-	watcher := fmt.Sprintf("org.%v.StatusNotifierWatcher", item.space)
-	method := fmt.Sprintf("%v.RegisterStatusNotifierItem", watcher)
-	err = dbusCall(item.conn.Object(watcher, "/StatusNotifierWatcher"), method, 0, item.name).Store()
-	if err != nil {
-		return fmt.Errorf("register StatusNotifierItem with %v: %w", watcher, err)
+	var errs []error
+	for _, space := range spaces {
+		watcher := fmt.Sprintf("org.%v.StatusNotifierWatcher", space)
+		method := fmt.Sprintf("%v.RegisterStatusNotifierItem", watcher)
+		err = dbusCall(item.conn.Object(watcher, "/StatusNotifierWatcher"), method, 0, item.name).Store()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("register StatusNotifierItem with %v: %w", watcher, err))
+		}
+		break
+	}
+	if len(errs) == len(spaces) {
+		return errors.Join(errs...)
 	}
 
 	return nil
 }
 
 func (item *Item) exportProps() error {
-	m := prop.Map{
-		item.inter: map[string]*prop.Prop{
-			"Category":            makeProp(ApplicationStatus),
-			"Id":                  makeProp(""),
-			"Title":               makeProp(""),
-			"Status":              makeProp(Active),
-			"WindowId":            makeProp(uint32(0)),
-			"IconName":            makeProp(""),
-			"IconPixmap":          makeProp[[]pixmap](nil),
-			"IconAccessibleDesc":  makeProp(""),
-			"OverlayIconName":     makeProp(""),
-			"OverlayIconPixmap":   makeProp[[]pixmap](nil),
-			"AttentionIconName":   makeProp(""),
-			"AttentionIconPixmap": makeProp[[]pixmap](nil),
-			"AttentionMovieName":  makeProp(""),
-			"ToolTip":             makeProp(tooltip{}),
-			"ItemIsMenu":          makeProp(false),
-			"Menu":                makeConstProp(menuPath),
-		},
-	}
-
-	props, err := prop.Export(item.conn, itemPath, m)
+	props, err := prop.Export(item.conn, itemPath, itemPropsMap)
 	if err != nil {
 		return err
 	}
@@ -145,24 +164,29 @@ func (item *Item) exportProps() error {
 }
 
 func (item *Item) exportIntrospect() error {
+	inter := func(name string) introspect.Interface {
+		return introspect.Interface{
+			Name:       name,
+			Methods:    introspect.Methods((*statusNotifierItem)(item)),
+			Properties: item.props.Introspection(name),
+			Signals: []introspect.Signal{
+				{Name: "NewTitle"},
+				{Name: "NewIcon"},
+				{Name: "NewAttentionIcon"},
+				{Name: "NewOverlayIcon"},
+				{Name: "NewToolTip"},
+				{Name: "NewStatus"},
+			},
+		}
+	}
+
 	node := introspect.Node{
 		Name: string(itemPath),
 		Interfaces: []introspect.Interface{
 			introspect.IntrospectData,
 			prop.IntrospectData,
-			{
-				Name:       item.inter,
-				Methods:    introspect.Methods((*statusNotifierItem)(item)),
-				Properties: item.props.Introspection(item.inter),
-				Signals: []introspect.Signal{
-					{Name: "NewTitle"},
-					{Name: "NewIcon"},
-					{Name: "NewAttentionIcon"},
-					{Name: "NewOverlayIcon"},
-					{Name: "NewToolTip"},
-					{Name: "NewStatus"},
-				},
-			},
+			inter(itemInter),
+			inter(itemInter2),
 		},
 	}
 
@@ -178,7 +202,11 @@ func (item *Item) Close() error {
 }
 
 func (item *Item) emit(name string) error {
-	return item.conn.Emit(itemPath, fmt.Sprintf("org.%v.StatusNotifierItem.%v", item.space, name))
+	errs := make([]error, 0, len(itemInters))
+	for _, inter := range itemInters {
+		errs = append(errs, item.conn.Emit(itemPath, fmt.Sprintf("%v.%v", inter, name)))
+	}
+	return errors.Join(errs...)
 }
 
 // SetProps sets the given properties for the item, emits any
@@ -201,87 +229,87 @@ func (item *Item) SetProps(props ...ItemProp) error {
 
 // Category returns the current value of the Category property.
 func (item *Item) Category() Category {
-	return item.props.GetMust(item.inter, "Category").(Category)
+	return item.props.GetMust(itemInter, "Category").(Category)
 }
 
 // ID returns the current value of the Id property.
 func (item *Item) ID() string {
-	return item.props.GetMust(item.inter, "Id").(string)
+	return item.props.GetMust(itemInter, "Id").(string)
 }
 
 // Title returns the current value of the Title property.
 func (item *Item) Title() string {
-	return item.props.GetMust(item.inter, "Title").(string)
+	return item.props.GetMust(itemInter, "Title").(string)
 }
 
 // Status returns the current value of the Status property.
 func (item *Item) Status() Status {
-	return item.props.GetMust(item.inter, "Status").(Status)
+	return item.props.GetMust(itemInter, "Status").(Status)
 }
 
 // WindowID returns the current value of the WindowId property.
 func (item *Item) WindowID() uint32 {
-	return item.props.GetMust(item.inter, "WindowId").(uint32)
+	return item.props.GetMust(itemInter, "WindowId").(uint32)
 }
 
 // IconName returns the current value of the IconName property.
 func (item *Item) IconName() string {
-	return item.props.GetMust(item.inter, "IconName").(string)
+	return item.props.GetMust(itemInter, "IconName").(string)
 }
 
 // IconPixmap returns the current value of the IconPixmap property.
 func (item *Item) IconPixmap() []image.Image {
-	pixmaps := item.props.GetMust(item.inter, "IconPixmap").([]pixmap)
+	pixmaps := item.props.GetMust(itemInter, "IconPixmap").([]pixmap)
 	return fromPixmaps(pixmaps)
 }
 
 // IconAccessibleDesc returns the current value of the
 // IconAccessibleDesc property.
 func (item *Item) IconAccessibleDesc() string {
-	return item.props.GetMust(item.inter, "IconAccessibleDesc").(string)
+	return item.props.GetMust(itemInter, "IconAccessibleDesc").(string)
 }
 
 // OverlayIconName returns the current value of the OverlayIconName
 // property.
 func (item *Item) OverlayIconName() string {
-	return item.props.GetMust(item.inter, "OverlayIconName").(string)
+	return item.props.GetMust(itemInter, "OverlayIconName").(string)
 }
 
 // OverlayIconPixmap returns the current value of the
 // OverlayIconPixmap property.
 func (item *Item) OverlayIconPixmap() []image.Image {
-	pixmaps := item.props.GetMust(item.inter, "OverlayIconPixmap").([]pixmap)
+	pixmaps := item.props.GetMust(itemInter, "OverlayIconPixmap").([]pixmap)
 	return fromPixmaps(pixmaps)
 }
 
 // AttentionIconName returns the current value of the AttentionIconName
 // property.
 func (item *Item) AttentionIconName() string {
-	return item.props.GetMust(item.inter, "AttentionIconName").(string)
+	return item.props.GetMust(itemInter, "AttentionIconName").(string)
 }
 
 // AttentionIconPixmap returns the current value of the
 // AttentionIconPixmap property.
 func (item *Item) AttentionIconPixmap() []image.Image {
-	pixmaps := item.props.GetMust(item.inter, "AttentionIconPixmap").([]pixmap)
+	pixmaps := item.props.GetMust(itemInter, "AttentionIconPixmap").([]pixmap)
 	return fromPixmaps(pixmaps)
 }
 
 // AttentionMovieName returns the current value of the
 // AttentionMovieName property.
 func (item *Item) AttentionMovieName() string {
-	return item.props.GetMust(item.inter, "AttentionMovieName").(string)
+	return item.props.GetMust(itemInter, "AttentionMovieName").(string)
 }
 
 // ToolTip returns the current values of the ToolTip property.
 func (item *Item) ToolTip() (iconName string, iconPixmap []image.Image, title, description string) {
-	tooltip := item.props.GetMust(item.inter, "ToolTip").(tooltip)
+	tooltip := item.props.GetMust(itemInter, "ToolTip").(tooltip)
 	return tooltip.IconName, fromPixmaps(tooltip.IconPixmap), tooltip.Title, tooltip.Description
 }
 
 // IsMenu returns the current value of the ItemIsMenu property.
 func (item *Item) IsMenu() bool {
-	return item.props.GetMust(item.inter, "ItemIsMenu").(bool)
+	return item.props.GetMust(itemInter, "ItemIsMenu").(bool)
 }
 
 // Menu returns the Menu instance associated with the Item.
@@ -389,6 +417,12 @@ type itemProps struct {
 	dirty set.Set[string]
 }
 
+func (item *itemProps) set(prop string, v any) {
+	for _, inter := range itemInters {
+		item.props.SetMust(inter, prop, v)
+	}
+}
+
 func (item *itemProps) mark(change string) {
 	item.dirty.Add(change)
 }
@@ -396,21 +430,21 @@ func (item *itemProps) mark(change string) {
 // ItemCategory sets the Category property to the given value.
 func ItemCategory(category Category) ItemProp {
 	return func(item *itemProps) {
-		item.props.SetMust(item.inter, "Category", category)
+		item.set("Category", category)
 	}
 }
 
 // ItemID sets the Id property to the given value.
 func ItemID(id string) ItemProp {
 	return func(item *itemProps) {
-		item.props.SetMust(item.inter, "Id", id)
+		item.set("Id", id)
 	}
 }
 
 // ItemTitle sets the Title property to the given value.
 func ItemTitle(title string) ItemProp {
 	return func(item *itemProps) {
-		item.props.SetMust(item.inter, "Title", title)
+		item.set("Title", title)
 		item.mark("NewTitle")
 	}
 }
@@ -418,7 +452,7 @@ func ItemTitle(title string) ItemProp {
 // ItemStatus sets the Status property to the given value.
 func ItemStatus(status Status) ItemProp {
 	return func(item *itemProps) {
-		item.props.SetMust(item.inter, "Status", status)
+		item.set("Status", status)
 		item.mark("NewStatus")
 	}
 }
@@ -426,14 +460,14 @@ func ItemStatus(status Status) ItemProp {
 // ItemWindowID sets the WindowId property to the given value.
 func ItemWindowID(id uint32) ItemProp {
 	return func(item *itemProps) {
-		item.props.SetMust(item.inter, "WindowId", id)
+		item.set("WindowId", id)
 	}
 }
 
 // ItemIconName sets the IconName property to the given value.
 func ItemIconName(name string) ItemProp {
 	return func(item *itemProps) {
-		item.props.SetMust(item.inter, "IconName", name)
+		item.set("IconName", name)
 		item.mark("NewIcon")
 	}
 }
@@ -441,7 +475,7 @@ func ItemIconName(name string) ItemProp {
 // ItemIconPixmap sets the IconPixmap property to the given value.
 func ItemIconPixmap(images ...image.Image) ItemProp {
 	return func(item *itemProps) {
-		item.props.SetMust(item.inter, "IconPixmap", toPixmaps(images))
+		item.set("IconPixmap", toPixmaps(images))
 		item.mark("NewIcon")
 	}
 }
@@ -450,7 +484,7 @@ func ItemIconPixmap(images ...image.Image) ItemProp {
 // given value.
 func ItemIconAccessibleDesc(desc string) ItemProp {
 	return func(item *itemProps) {
-		item.props.SetMust(item.inter, "IconAccessibleDesc", desc)
+		item.set("IconAccessibleDesc", desc)
 		item.mark("NewIcon")
 	}
 }
@@ -459,7 +493,7 @@ func ItemIconAccessibleDesc(desc string) ItemProp {
 // value.
 func ItemOverlayIconName(name string) ItemProp {
 	return func(item *itemProps) {
-		item.props.SetMust(item.inter, "OverlayIconName", name)
+		item.set("OverlayIconName", name)
 		item.mark("NewOverlayIcon")
 	}
 }
@@ -468,7 +502,7 @@ func ItemOverlayIconName(name string) ItemProp {
 // given value.
 func ItemOverlayIconPixmap(images ...image.Image) ItemProp {
 	return func(item *itemProps) {
-		item.props.SetMust(item.inter, "OverlayIconPixmap", toPixmaps(images))
+		item.set("OverlayIconPixmap", toPixmaps(images))
 		item.mark("NewOverlayIcon")
 	}
 }
@@ -477,7 +511,7 @@ func ItemOverlayIconPixmap(images ...image.Image) ItemProp {
 // given value.
 func ItemAttentionIconName(name string) ItemProp {
 	return func(item *itemProps) {
-		item.props.SetMust(item.inter, "AttentionIconName", name)
+		item.set("AttentionIconName", name)
 		item.mark("NewAttentionIcon")
 	}
 }
@@ -486,7 +520,7 @@ func ItemAttentionIconName(name string) ItemProp {
 // the given value.
 func ItemAttentionIconPixmap(images ...image.Image) ItemProp {
 	return func(item *itemProps) {
-		item.props.SetMust(item.inter, "AttentionIconPixmap", toPixmaps(images))
+		item.set("AttentionIconPixmap", toPixmaps(images))
 		item.mark("NewAttentionIcon")
 	}
 }
@@ -495,7 +529,7 @@ func ItemAttentionIconPixmap(images ...image.Image) ItemProp {
 // given value.
 func ItemAttentionMovieName(name string) ItemProp {
 	return func(item *itemProps) {
-		item.props.SetMust(item.inter, "AttentionMovieName", name)
+		item.set("AttentionMovieName", name)
 		item.mark("NewAttentionIcon")
 	}
 }
@@ -503,7 +537,7 @@ func ItemAttentionMovieName(name string) ItemProp {
 // ItemToolTip sets the ToolTip property to the given values.
 func ItemToolTip(iconName string, iconPixmap []image.Image, title, description string) ItemProp {
 	return func(item *itemProps) {
-		item.props.SetMust(item.inter, "ToolTip", tooltip{IconName: iconName, IconPixmap: toPixmaps(iconPixmap), Title: title, Description: description})
+		item.set("ToolTip", tooltip{IconName: iconName, IconPixmap: toPixmaps(iconPixmap), Title: title, Description: description})
 		item.mark("NewToolTip")
 	}
 }
@@ -511,7 +545,7 @@ func ItemToolTip(iconName string, iconPixmap []image.Image, title, description s
 // ItemIsMenu sets the ItemIsMenu property to the given value.
 func ItemIsMenu(itemIsMenu bool) ItemProp {
 	return func(item *itemProps) {
-		item.props.SetMust(item.inter, "ItemIsMenu", itemIsMenu)
+		item.set("ItemIsMenu", itemIsMenu)
 	}
 }
 
@@ -524,4 +558,11 @@ func ItemHandler(handler Handler) ItemProp {
 		}
 		item.handler.Store(p)
 	}
+}
+
+var id uint64
+
+func getName() string {
+	id := atomic.AddUint64(&id, 1)
+	return fmt.Sprintf("org.freedesktop.StatusNotifierItem-%v-%v", os.Getpid(), id)
 }

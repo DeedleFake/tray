@@ -11,7 +11,6 @@ import (
 	"maps"
 	"os"
 	"slices"
-	"sync/atomic"
 
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/prop"
@@ -28,7 +27,7 @@ func init() {
 func dbusCall(obj dbus.BusObject, method string, flags dbus.Flags, args ...any) *dbus.Call {
 	call := obj.Call(method, flags, args...)
 	if call.Err != nil {
-		logger.Error(
+		logger.Warn(
 			"dbus call failed",
 			"destination", call.Destination,
 			"path", call.Path,
@@ -38,28 +37,6 @@ func dbusCall(obj dbus.BusObject, method string, flags dbus.Flags, args ...any) 
 		)
 	}
 	return call
-}
-
-var id uint64
-
-func getName(space string) string {
-	id := atomic.AddUint64(&id, 1)
-	return fmt.Sprintf("org.%v.StatusNotifierItem-%v-%v", space, os.Getpid(), id)
-}
-
-func getSpace(conn *dbus.Conn) (string, error) {
-	var freedesktopOwned bool
-	err := dbusCall(conn.BusObject(), "NameHasOwner", 0, "org.freedesktop.StatusNotifierWatcher").Store(&freedesktopOwned)
-	if err != nil {
-		// Just default to the more common one. Woest case scenario it fails anyways.
-		logger.Warn("failed to identify watcher name", "err", err)
-		return "kde", nil
-	}
-
-	if freedesktopOwned {
-		return "freedesktop", nil
-	}
-	return "kde", nil
 }
 
 func endianSwap(data []byte) {
