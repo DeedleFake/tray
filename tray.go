@@ -25,6 +25,21 @@ func init() {
 	}
 }
 
+func dbusCall(obj dbus.BusObject, method string, flags dbus.Flags, args ...any) *dbus.Call {
+	call := obj.Call(method, flags, args...)
+	if call.Err != nil {
+		logger.Error(
+			"dbus call failed",
+			"destination", call.Destination,
+			"path", call.Path,
+			"method", call.Method,
+			"args", call.Args,
+			"err", call.Err,
+		)
+	}
+	return call
+}
+
 var id uint64
 
 func getName(space string) string {
@@ -34,11 +49,11 @@ func getName(space string) string {
 
 func getSpace(conn *dbus.Conn) (string, error) {
 	var freedesktopOwned bool
-	call := conn.BusObject().Call("NameHasOwner", 0, "org.freedesktop.StatusNotifierWatcher")
-	err := call.Store(&freedesktopOwned)
+	err := dbusCall(conn.BusObject(), "NameHasOwner", 0, "org.freedesktop.StatusNotifierWatcher").Store(&freedesktopOwned)
 	if err != nil {
-		logger.Error("dbus call failed", "destination", call.Destination, "path", call.Path, "args", call.Args, "err", err)
-		return "kde", nil // Just default to the more common one. Woest case scenario it fails anyways.
+		// Just default to the more common one. Woest case scenario it fails anyways.
+		logger.Warn("failed to identify watcher name", "err", err)
+		return "kde", nil
 	}
 
 	if freedesktopOwned {

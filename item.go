@@ -106,7 +106,7 @@ func (item *Item) export(props []ItemProp) error {
 
 	watcher := fmt.Sprintf("org.%v.StatusNotifierWatcher", item.space)
 	method := fmt.Sprintf("%v.RegisterStatusNotifierItem", watcher)
-	err = item.conn.Object(watcher, "/StatusNotifierWatcher").Call(method, 0, item.name).Store()
+	err = dbusCall(item.conn.Object(watcher, "/StatusNotifierWatcher"), method, 0, item.name).Store()
 	if err != nil {
 		return fmt.Errorf("register StatusNotifierItem with %v: %w", watcher, err)
 	}
