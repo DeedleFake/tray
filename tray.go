@@ -33,9 +33,11 @@ func getName(space string) string {
 
 func getSpace(conn *dbus.Conn) (string, error) {
 	var freedesktopOwned bool
-	err := conn.BusObject().Call("NameHasOwner", 0, "org.freedesktop.StatusNotifierWatcher").Store(&freedesktopOwned)
+	call := conn.BusObject().Call("NameHasOwner", 0, "org.freedesktop.StatusNotifierWatcher")
+	err := call.Store(&freedesktopOwned)
 	if err != nil {
-		return "", fmt.Errorf("check for org.freedesktop.StatusNotifierWatcher ownership: %w", err)
+		logger.Error("dbus call failed", "destination", call.Destination, "path", call.Path, "args", call.Args, "err", err)
+		return "kde", nil // Just default to the more common one. Woest case scenario it fails anyways.
 	}
 
 	if freedesktopOwned {
