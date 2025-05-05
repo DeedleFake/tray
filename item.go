@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sync/atomic"
 
+	"deedles.dev/tray/internal/set"
 	"deedles.dev/ximage/format"
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
@@ -187,13 +188,13 @@ func (item *Item) emit(name string) error {
 // errors that happened. A non-nil error return does not necessarily
 // indicate complete failure.
 func (item *Item) SetProps(props ...ItemProp) error {
-	w := itemProps{Item: item}
+	w := itemProps{Item: item, dirty: make(set.Set[string])}
 	for _, p := range props {
 		p(&w)
 	}
 
 	errs := make([]error, 0, len(w.dirty))
-	for _, s := range w.dirty {
+	for s := range w.dirty {
 		errs = append(errs, item.emit(s))
 	}
 
@@ -387,13 +388,11 @@ type ItemProp func(*itemProps)
 
 type itemProps struct {
 	*Item
-	dirty []string
+	dirty set.Set[string]
 }
 
 func (item *itemProps) mark(change string) {
-	if !slices.Contains(item.dirty, change) {
-		item.dirty = append(item.dirty, change)
-	}
+	item.dirty.Add(change)
 }
 
 // ItemCategory sets the Category property to the given value.

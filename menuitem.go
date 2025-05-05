@@ -6,8 +6,12 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"iter"
+	"maps"
 	"slices"
 	"sync"
+
+	"deedles.dev/tray/internal/set"
 )
 
 // MenuItem is a single item in the menu of the tray item. The item
@@ -172,15 +176,15 @@ func (item *MenuItem) MoveBefore(sibling *MenuItem) error {
 	return item.menu.updateLayout(updates...)
 }
 
-func (item *MenuItem) applyProps(props []MenuItemProp) ([]string, []error) {
-	w := menuItemProps{MenuItem: item}
+func (item *MenuItem) applyProps(props []MenuItemProp) (iter.Seq[string], []error) {
+	w := menuItemProps{MenuItem: item, dirty: make(set.Set[string])}
 	for _, p := range props {
 		p(&w)
 	}
-	return w.dirty, w.errs
+	return maps.Keys(w.dirty), w.errs
 }
 
-func (item *MenuItem) emitPropertiesUpdated(props []string) error {
+func (item *MenuItem) emitPropertiesUpdated(props iter.Seq[string]) error {
 	type prop struct {
 		Name  string
 		Value any
@@ -196,8 +200,8 @@ func (item *MenuItem) emitPropertiesUpdated(props []string) error {
 		Props []string
 	}
 
-	updated := make([]prop, 0, len(props))
-	for _, change := range props {
+	var updated []prop
+	for change := range props {
 		updated = append(updated, prop{
 			Name:  change,
 			Value: item.props[change],
@@ -378,14 +382,12 @@ type MenuItemProp func(*menuItemProps)
 
 type menuItemProps struct {
 	*MenuItem
-	dirty []string
+	dirty set.Set[string]
 	errs  []error
 }
 
 func (item *menuItemProps) mark(change string) {
-	if !slices.Contains(item.dirty, change) {
-		item.dirty = append(item.dirty, change)
-	}
+	item.dirty.Add(change)
 }
 
 func (item *menuItemProps) catch(err error) {

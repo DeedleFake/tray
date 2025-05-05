@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 
+	"deedles.dev/tray/internal/set"
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
 	"github.com/godbus/dbus/v5/prop"
@@ -25,6 +26,7 @@ type Menu struct {
 	nodes    map[int]*MenuItem
 	children []int
 	revision uint32
+	dirty    set.Set[int]
 	handler  MenuEventHandler
 }
 
@@ -32,6 +34,7 @@ func (item *Item) createMenu() error {
 	item.menu = &Menu{
 		item:  item,
 		nodes: make(map[int]*MenuItem),
+		dirty: make(set.Set[int]),
 	}
 	return item.menu.export()
 }
