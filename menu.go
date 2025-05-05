@@ -2,6 +2,7 @@ package tray
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 
 	"deedles.dev/tray/internal/set"
@@ -36,23 +37,27 @@ func (item *Item) createMenu() error {
 		nodes: make(map[int]*MenuItem),
 		dirty: make(set.Set[int]),
 	}
-	return item.menu.export()
+	err := item.menu.export()
+	if err != nil {
+		return fmt.Errorf("export dbusmenu: %w", err)
+	}
+	return nil
 }
 
 func (menu *Menu) export() error {
 	err := menu.item.conn.Export((*dbusmenu)(menu), menuPath, menuInter)
 	if err != nil {
-		return err
+		return fmt.Errorf("export methods: %w", err)
 	}
 
 	err = menu.exportProps()
 	if err != nil {
-		return err
+		return fmt.Errorf("export properties: %w", err)
 	}
 
 	err = menu.exportIntrospect()
 	if err != nil {
-		return err
+		return fmt.Errorf("export introspection data: %w", err)
 	}
 
 	return nil

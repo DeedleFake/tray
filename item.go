@@ -35,7 +35,7 @@ type Item struct {
 func New(props ...ItemProp) (*Item, error) {
 	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connect to session bus: %w", err)
 	}
 
 	item := Item{
@@ -44,12 +44,12 @@ func New(props ...ItemProp) (*Item, error) {
 
 	err = item.initProtoData()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("initialize protocol data: %w", err)
 	}
 
 	err = item.export(props)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("export StatusNotifierItem: %w", err)
 	}
 
 	return &item, nil
@@ -58,7 +58,7 @@ func New(props ...ItemProp) (*Item, error) {
 func (item *Item) initProtoData() error {
 	space, err := getSpace(item.conn)
 	if err != nil {
-		return err
+		return fmt.Errorf("get namespace: %w", err)
 	}
 	item.space = space
 	item.inter = fmt.Sprintf("org.%v.StatusNotifierItem", space)
@@ -81,36 +81,34 @@ func (item *Item) initProtoData() error {
 func (item *Item) export(props []ItemProp) error {
 	err := item.conn.Export((*statusNotifierItem)(item), itemPath, item.inter)
 	if err != nil {
-		return err
+		return fmt.Errorf("export methods: %w", err)
 	}
 
 	err = item.exportProps()
 	if err != nil {
-		return err
+		return fmt.Errorf("export properties: %w", err)
 	}
 
 	err = item.exportIntrospect()
 	if err != nil {
-		return err
+		return fmt.Errorf("export introspect data: %w", err)
 	}
 
 	err = item.createMenu()
 	if err != nil {
-		return err
+		return fmt.Errorf("create menu: %w", err)
 	}
 
 	err = item.SetProps(props...)
 	if err != nil {
-		return err
+		return fmt.Errorf("set properties: %w", err)
 	}
 
-	method := fmt.Sprintf("org.%v.StatusNotifierWatcher.RegisterStatusNotifierItem", item.space)
-	err = item.conn.Object(
-		fmt.Sprintf("org.%v.StatusNotifierWatcher", item.space),
-		"/StatusNotifierWatcher",
-	).Call(method, 0, item.name).Store()
+	watcher := fmt.Sprintf("org.%v.StatusNotifierWatcher", item.space)
+	method := fmt.Sprintf("%v.RegisterStatusNotifierItem", watcher)
+	err = item.conn.Object(watcher, "/StatusNotifierWatcher").Call(method, 0, item.name).Store()
 	if err != nil {
-		return err
+		return fmt.Errorf("register StatusNotifierItem with %v: %w", watcher, err)
 	}
 
 	return nil

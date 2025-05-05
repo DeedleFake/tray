@@ -35,7 +35,7 @@ func getSpace(conn *dbus.Conn) (string, error) {
 	var freedesktopOwned bool
 	err := conn.BusObject().Call("NameHasOwner", 0, "org.freedesktop.StatusNotifierWatcher").Store(&freedesktopOwned)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("check for org.freedesktop.StatusNotifierWatcher ownership: %w", err)
 	}
 
 	if freedesktopOwned {
