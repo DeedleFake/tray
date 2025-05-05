@@ -92,11 +92,11 @@ func (item *MenuItem) Remove() error {
 	}
 	defer parent.lock()()
 
+	parent.setChildren(sliceRemove(parent.getChildren(), item.id))
+
 	if parent != item.menu {
 		defer item.menu.lock()()
 	}
-
-	parent.setChildren(sliceRemove(parent.getChildren(), item.id))
 
 	delete(item.menu.nodes, item.id)
 
@@ -114,13 +114,14 @@ func appendChild(menu *Menu, dst menuNode, child *MenuItem) error {
 	if parent != dst {
 		defer parent.lock()()
 	}
-	if dst != menu && parent != menu {
-		defer menu.lock()()
-	}
 
 	parent.setChildren(sliceRemove(parent.getChildren(), child.id))
 	dst.setChildren(append(dst.getChildren(), child.id))
 	child.parent = dst.getID()
+
+	if dst != menu && parent != menu {
+		defer menu.lock()()
+	}
 
 	updates := slices.Compact([]menuNode{dst, parent})
 	return menu.updateLayout(updates...)
@@ -537,6 +538,4 @@ func (item *MenuItem) setChildren(c []int) {
 		return
 	}
 	item.props["children-display"] = "submenu"
-
-	item.menu.dirty.Add(item.id)
 }
