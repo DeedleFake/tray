@@ -142,10 +142,10 @@ func (item *Item) export(props []ItemProp) error {
 		watcher := fmt.Sprintf("org.%v.StatusNotifierWatcher", space)
 		method := fmt.Sprintf("%v.RegisterStatusNotifierItem", watcher)
 		err = dbusCall(item.conn.Object(watcher, "/StatusNotifierWatcher"), method, 0, item.name).Store()
-		if err != nil {
-			errs = append(errs, fmt.Errorf("register StatusNotifierItem with %v: %w", watcher, err))
+		if err == nil {
+			break
 		}
-		break
+		errs = append(errs, fmt.Errorf("register StatusNotifierItem with %v: %w", watcher, err))
 	}
 	if len(errs) == len(spaces) {
 		return errors.Join(errs...)
