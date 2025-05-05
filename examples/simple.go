@@ -7,6 +7,7 @@ import (
 	"image"
 	_ "image/png"
 	"sync"
+	"time"
 
 	"deedles.dev/tray"
 )
@@ -104,6 +105,13 @@ func main() {
 	)
 
 	m.Unlock()
+
+	time.AfterFunc(5*time.Second, func() {
+		m.Lock()
+		defer m.Unlock()
+
+		quit.SetProps(tray.MenuItemLabel("Exit"))
+	})
 
 	<-done
 }
