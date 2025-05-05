@@ -16,6 +16,17 @@ const (
 	menuInter string          = "com.canonical.dbusmenu"
 )
 
+var (
+	menuPropsMap = prop.Map{
+		menuInter: map[string]*prop.Prop{
+			"Version":       makeConstProp(3),
+			"TextDirection": makeProp(LeftToRight),
+			"Status":        makeProp(Normal),
+			"IconThemePath": makeProp[[]string](nil),
+		},
+	}
+)
+
 // Menu is the menu for a StatusNotifierItem as specififed by the
 // dbusmenu interface. An instance of it is available via [Item.Menu].
 type Menu struct {
@@ -64,16 +75,7 @@ func (menu *Menu) export() error {
 }
 
 func (menu *Menu) exportProps() error {
-	m := prop.Map{
-		menuInter: map[string]*prop.Prop{
-			"Version":       makeConstProp(3),
-			"TextDirection": makeProp(LeftToRight),
-			"Status":        makeProp(Normal),
-			"IconThemePath": makeProp[[]string](nil),
-		},
-	}
-
-	props, err := prop.Export(menu.item.conn, menuPath, m)
+	props, err := prop.Export(menu.item.conn, menuPath, menuPropsMap)
 	if err != nil {
 		return err
 	}

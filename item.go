@@ -26,7 +26,7 @@ var (
 	spaces     = [...]string{"freedesktop", "kde"}
 	itemInters = [...]string{itemInter, itemInter2}
 
-	itemPropsData = map[string]*prop.Prop{
+	itemPropsInter = map[string]*prop.Prop{
 		"Category":            makeProp(ApplicationStatus),
 		"Id":                  makeProp(""),
 		"Title":               makeProp(""),
@@ -46,8 +46,8 @@ var (
 	}
 
 	itemPropsMap = prop.Map{
-		itemInter:  itemPropsData,
-		itemInter2: itemPropsData,
+		itemInter:  itemPropsInter,
+		itemInter2: itemPropsInter,
 	}
 )
 
