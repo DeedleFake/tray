@@ -73,10 +73,14 @@ func (menu *dbusmenu) buildChildren(parent *MenuItem, depth int, props []string)
 		return nil
 	}
 
+	var parentID int
 	ids := menu.children
 	if parent != nil {
+		parentID = parent.id
 		ids = parent.children
 	}
+
+	menu.dirty.Remove(parentID)
 
 	children := make([]any, 0, len(ids))
 	for _, id := range ids {
@@ -92,8 +96,9 @@ func (menu *dbusmenu) buildChildren(parent *MenuItem, depth int, props []string)
 func (menu *dbusmenu) GetLayout(parentID int, recursionDepth int, propertyNames []string) (revision uint32, layout menuLayout, derr *dbus.Error) {
 	logger.Info("menu method", "name", "GetLayout", "parentID", parentID, "propertyNames", propertyNames)
 
-	menu.m.RLock()
-	defer menu.m.RUnlock()
+	// TODO: Find a way to do this without locking it.
+	menu.m.Lock()
+	defer menu.m.Unlock()
 
 	var parent *MenuItem
 	if parentID != 0 {
@@ -221,12 +226,33 @@ func (menu *dbusmenu) EventGroup(events []menuEvent) ([]int, *dbus.Error) {
 
 func (menu *dbusmenu) AboutToShow(id int) (bool, *dbus.Error) {
 	logger.Info("menu method", "name", "AboutToShow", "id", id)
-	return false, nil
+
+	menu.m.RLock()
+	defer menu.m.RUnlock()
+
+	return menu.dirty.Contains(id), nil
 }
 
-func (menu *dbusmenu) AboutToShowGroup(ids []int) ([]menuUpdate, []int, *dbus.Error) {
+func (menu *dbusmenu) AboutToShowGroup(ids []int) (updates []menuUpdate, invalid []int, derr *dbus.Error) {
 	logger.Info("menu method", "name", "AboutToShowGroup", "ids", ids)
-	return nil, nil, nil
+
+	menu.m.RLock()
+	defer menu.m.RUnlock()
+
+	for _, id := range ids {
+		item := menu.nodes[id]
+		if item == nil {
+			invalid = append(invalid, id)
+			continue
+		}
+
+		updates = append(updates, menuUpdate{
+			ID:         id,
+			NeedUpdate: menu.dirty.Contains(id),
+		})
+	}
+
+	return updates, invalid, nil
 }
 
 // TextDirection represents the possible configurations a menu's text

@@ -208,6 +208,8 @@ func (item *MenuItem) emitPropertiesUpdated(props iter.Seq[string]) error {
 		})
 	}
 
+	item.menu.dirty.Add(item.parent)
+
 	return item.menu.item.conn.Emit(
 		menuPath,
 		"com.canonical.dbusmenu.ItemsPropertiesUpdated",
@@ -336,12 +338,11 @@ func (item *MenuItem) VendorProp(vendor, prop string) (any, bool) {
 
 // SetProps sets all of the given properties on the item.
 func (item *MenuItem) SetProps(props ...MenuItemProp) error {
+	defer item.menu.lock()()
 	defer item.lock()()
 
 	dirty, errs := item.applyProps(props)
 	errs = append(errs, item.emitPropertiesUpdated(dirty))
-
-	defer item.menu.lock()()
 	errs = append(errs, item.menu.updateLayout(item))
 
 	return errors.Join(errs...)

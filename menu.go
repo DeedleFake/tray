@@ -117,8 +117,10 @@ func (menu *Menu) updateLayout(nodes ...menuNode) error {
 
 	errs := make([]error, 0, len(nodes))
 	for _, node := range nodes {
-		err := menu.item.conn.Emit(menuPath, "com.canonical.dbusmenu.LayoutUpdated", menu.revision, node.getID())
+		id := node.getID()
+		err := menu.item.conn.Emit(menuPath, "com.canonical.dbusmenu.LayoutUpdated", menu.revision, id)
 		errs = append(errs, err)
+		menu.dirty.Add(id)
 	}
 
 	return errors.Join(errs...)
