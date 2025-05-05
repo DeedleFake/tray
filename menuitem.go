@@ -99,6 +99,45 @@ func (item *MenuItem) Remove() error {
 	return item.menu.updateLayout(parent)
 }
 
+func appendChild(menu *Menu, dst menuNode, child *MenuItem) error {
+	parent := child.getParent()
+	if parent == nil {
+		// TODO: Allow appending children who have previously been removed?
+		return nil
+	}
+
+	defer dst.lock()()
+	if parent != dst {
+		defer parent.lock()()
+	}
+
+	parent.setChildren(sliceRemove(parent.getChildren(), child.id))
+	dst.setChildren(append(dst.getChildren(), child.id))
+	child.parent = dst.getID()
+
+	if dst != menu && parent != menu {
+		defer menu.lock()()
+	}
+
+	updates := slices.Compact([]menuNode{dst, parent})
+	return menu.updateLayout(updates...)
+}
+
+// AppendChild makes child the last child of the root of the menu
+// hiearchy, moving it from wherever it currently is. The same rules
+// about sub-menu conversion apply as they do in both [AddChild] and
+// [Remove].
+func (menu *Menu) AppendChild(child *MenuItem) error {
+	return appendChild(menu, menu, child)
+}
+
+// AppendChild makes child the last child of item, moving it from
+// wherever it currently is. The same rules about sub-menu conversion
+// apply as they do in both [AddChild] and [Remove].
+func (item *MenuItem) AppendChild(child *MenuItem) error {
+	return appendChild(item.menu, item, child)
+}
+
 // MoveBefore makes item the previous sibling of sibling. If
 // necessary, this method will transfer item from its current parent
 // to sibling's parent.
@@ -129,11 +168,7 @@ func (item *MenuItem) MoveBefore(sibling *MenuItem) error {
 		defer item.menu.lock()()
 	}
 
-	updates := []menuNode{dst, src}
-	if dst == src {
-		updates = updates[:1]
-	}
-
+	updates := slices.Compact([]menuNode{dst, src})
 	return item.menu.updateLayout(updates...)
 }
 

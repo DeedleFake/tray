@@ -105,6 +105,11 @@ func (menu *Menu) exportIntrospect() error {
 }
 
 func (menu *Menu) updateLayout(nodes ...menuNode) error {
+	if len(nodes) == 0 {
+		// If this happens, it's extremely likely to be a bug.
+		panic("no nodes given")
+	}
+
 	menu.revision++
 
 	errs := make([]error, 0, len(nodes))
