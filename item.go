@@ -73,7 +73,7 @@ func (item *Item) initProtoData() error {
 		logger.Warn("request name failed", "name", item.name, "reply", reply, "err", err)
 		item.name = item.conn.Names()[0]
 	}
-	logger.Info("name chosen", "name", item.name)
+	logger.Info("names acquired", "registered", item.name, "available", item.conn.Names())
 
 	return nil
 }

@@ -205,4 +205,5 @@ func (menu *Menu) getChildren() []int {
 
 func (menu *Menu) setChildren(c []int) {
 	menu.children = c
+	menu.dirty.Add(0)
 }
