@@ -10,6 +10,12 @@ import (
 	"sync"
 )
 
+// MenuItem is a single item in the menu of the tray item. The item
+// can be a regular single item or can be a sub-menu containing more
+// items, recursively.
+//
+// MenuItems are created by calling the AddChild method on either the
+// [Menu] or on another MenuItem.
 type MenuItem struct {
 	menu   *Menu
 	id     int
@@ -35,6 +41,8 @@ func (menu *Menu) newItem(parent int) *MenuItem {
 	return &item
 }
 
+// AddChild creates a new MenuItem with the given properties and
+// appends it as the last child of the root of the menu hierarchy.
 func (menu *Menu) AddChild(props ...MenuItemProp) (*MenuItem, error) {
 	defer menu.lock()()
 
@@ -50,6 +58,10 @@ func (menu *Menu) AddChild(props ...MenuItemProp) (*MenuItem, error) {
 	return child, errors.Join(errs...)
 }
 
+// AddChild creates a new MenuItem with the given properties and
+// append it as the last child of the MenuItem that it is called on.
+// If the receiver MenuItem has no children before this, it will
+// automatically be converted into a sub-menu MenuItem.
 func (item *MenuItem) AddChild(props ...MenuItemProp) (*MenuItem, error) {
 	defer item.menu.lock()()
 	defer item.lock()()
@@ -66,6 +78,9 @@ func (item *MenuItem) AddChild(props ...MenuItemProp) (*MenuItem, error) {
 	return child, errors.Join(errs...)
 }
 
+// Remove removes item from the menu hierarchy completely. If its
+// parent is another MenuItem and item is its only child, the parent
+// is converted from a sub-menu item back into a regular one.
 func (item *MenuItem) Remove() error {
 	parent := item.getParent()
 	if parent == nil {
@@ -84,6 +99,9 @@ func (item *MenuItem) Remove() error {
 	return item.menu.updateLayout(parent)
 }
 
+// MoveBefore makes item the previous sibling of sibling. If
+// necessary, this method will transfer item from its current parent
+// to sibling's parent.
 func (item *MenuItem) MoveBefore(sibling *MenuItem) error {
 	dst := sibling.getParent()
 	src := item.getParent()
@@ -162,6 +180,9 @@ func (item *MenuItem) emitPropertiesUpdated(props []string) error {
 	)
 }
 
+// RequestActivation sends a request to the environment that item be
+// activated. What exactly this means is dependent on the environment
+// and situation.
 func (item *MenuItem) RequestActivation(timestamp uint32) error {
 	return item.menu.item.conn.Emit(
 		menuPath,
@@ -171,6 +192,7 @@ func (item *MenuItem) RequestActivation(timestamp uint32) error {
 	)
 }
 
+// Type returns the current value of the item's "type" property,
 func (item *MenuItem) Type() MenuType {
 	item.m.RLock()
 	defer item.m.RUnlock()
@@ -178,6 +200,9 @@ func (item *MenuItem) Type() MenuType {
 	return mapLookup(item.props, "type", MenuType("standard"))
 }
 
+// Label returns the current value of the item's "label" property.
+// This is the text that should be displayed by the environment for
+// the item in the menu.
 func (item *MenuItem) Label() string {
 	item.m.RLock()
 	defer item.m.RUnlock()
@@ -185,6 +210,7 @@ func (item *MenuItem) Label() string {
 	return mapLookup(item.props, "label", "")
 }
 
+// Enabled returns the current value of the item's "enabled" property.
 func (item *MenuItem) Enabled() bool {
 	item.m.RLock()
 	defer item.m.RUnlock()
@@ -192,6 +218,7 @@ func (item *MenuItem) Enabled() bool {
 	return mapLookup(item.props, "enabled", true)
 }
 
+// Visible returns the current value of the item's "visible" property.
 func (item *MenuItem) Visible() bool {
 	item.m.RLock()
 	defer item.m.RUnlock()
@@ -199,6 +226,10 @@ func (item *MenuItem) Visible() bool {
 	return mapLookup(item.props, "visible", true)
 }
 
+// IconName returns the current value of the item's "icon-name"
+// property. This is one of two properties that determine what icon
+// should be displayed in the menu by the environment, the other being
+// "icon-data".
 func (item *MenuItem) IconName() string {
 	item.m.RLock()
 	defer item.m.RUnlock()
@@ -206,6 +237,10 @@ func (item *MenuItem) IconName() string {
 	return mapLookup(item.props, "icon-name", "")
 }
 
+// IconData returns the current value of the item's "icon-data"
+// property. This is one of two properties that determine what icon
+// should be displayed in the menu by the environment, the other being
+// "icon-name".
 func (item *MenuItem) IconData() (image.Image, error) {
 	item.m.RLock()
 	defer item.m.RUnlock()
@@ -217,6 +252,13 @@ func (item *MenuItem) IconData() (image.Image, error) {
 	return png.Decode(bytes.NewReader(data))
 }
 
+// Shortcut returns the current value of the item's "shortcut"
+// property. This is used by the environment to determine keyboard
+// shortcuts and is of the form
+//
+//	[][]string{
+//		[]string{"Control", "Alt", "e"},
+//	}
 func (item *MenuItem) Shortcut() [][]string {
 	item.m.RLock()
 	defer item.m.RUnlock()
@@ -224,6 +266,8 @@ func (item *MenuItem) Shortcut() [][]string {
 	return mapLookup(item.props, "shortcut", [][]string(nil))
 }
 
+// ToggleType returns the current value of the item's "toggle-type"
+// property.
 func (item *MenuItem) ToggleType() MenuToggleType {
 	item.m.RLock()
 	defer item.m.RUnlock()
@@ -231,6 +275,8 @@ func (item *MenuItem) ToggleType() MenuToggleType {
 	return mapLookup(item.props, "toggle-type", MenuToggleType(""))
 }
 
+// ToggleState returns the current value of the item's "toggle-state"
+// property.
 func (item *MenuItem) ToggleState() MenuToggleState {
 	item.m.RLock()
 	defer item.m.RUnlock()
@@ -238,6 +284,9 @@ func (item *MenuItem) ToggleState() MenuToggleState {
 	return mapLookup(item.props, "toggle-state", MenuToggleState(-1))
 }
 
+// VendorProp returns the current value of the vendor-specific custom
+// property with the given vendor and property name. It returns false
+// as its second return if no such property exists.
 func (item *MenuItem) VendorProp(vendor, prop string) (any, bool) {
 	item.m.RLock()
 	defer item.m.RUnlock()
@@ -246,6 +295,7 @@ func (item *MenuItem) VendorProp(vendor, prop string) (any, bool) {
 	return v, ok
 }
 
+// SetProps sets all of the given properties on the item.
 func (item *MenuItem) SetProps(props ...MenuItemProp) error {
 	defer item.lock()()
 
@@ -258,6 +308,7 @@ func (item *MenuItem) SetProps(props ...MenuItemProp) error {
 	return errors.Join(errs...)
 }
 
+// MenuType is the possible values of the type of a menu item.
 type MenuType string
 
 const (
@@ -265,6 +316,8 @@ const (
 	Separator MenuType = "separator"
 )
 
+// MenuToggleType is the types of togglability that a menu item can
+// have.
 type MenuToggleType string
 
 const (
@@ -273,6 +326,7 @@ const (
 	Radio         MenuToggleType = "radio"
 )
 
+// MenuToggleState is the two main states that a togglable menu item can be in. All values other than [On] and [Off] are considered to be indeterminate.
 type MenuToggleState int
 
 const (
@@ -280,6 +334,7 @@ const (
 	On  MenuToggleState = 1
 )
 
+// Indeterminate returns true if state represents an indeterminate state other than [On] and [Off].
 func (state MenuToggleState) Indeterminate() bool {
 	return state != Off && state != On
 }
@@ -302,12 +357,16 @@ func (item *menuItemProps) catch(err error) {
 	item.errs = append(item.errs, err)
 }
 
+// MenuItemType sets a MenuItem's "type" property. See
+// [MenuItem.Type].
 func MenuItemType(t MenuType) MenuItemProp {
 	return func(item *menuItemProps) {
 		item.props["type"] = t
 	}
 }
 
+// MenuItemLabel sets a MenuItem's "label" property. See
+// [MenuItem.Label].
 func MenuItemLabel(label string) MenuItemProp {
 	return func(item *menuItemProps) {
 		item.props["label"] = label
@@ -315,6 +374,8 @@ func MenuItemLabel(label string) MenuItemProp {
 	}
 }
 
+// MenuItemEnabled sets a MenuItem's "enabled" property. See
+// [MenuItem.Enabled].
 func MenuItemEnabled(enabled bool) MenuItemProp {
 	return func(item *menuItemProps) {
 		item.props["enabled"] = enabled
@@ -322,6 +383,8 @@ func MenuItemEnabled(enabled bool) MenuItemProp {
 	}
 }
 
+// MenuItemVisible sets a MenuItem's "visible" property. See
+// [MenuItem.Visible].
 func MenuItemVisible(visible bool) MenuItemProp {
 	return func(item *menuItemProps) {
 		item.props["visible"] = visible
@@ -329,6 +392,8 @@ func MenuItemVisible(visible bool) MenuItemProp {
 	}
 }
 
+// MenuItemIconName sets a MenuItem's "icon-name" property. See
+// [MenuItem.IconName].
 func MenuItemIconName(name string) MenuItemProp {
 	return func(item *menuItemProps) {
 		item.props["icon-name"] = name
@@ -336,6 +401,8 @@ func MenuItemIconName(name string) MenuItemProp {
 	}
 }
 
+// MenuItemIconData sets a MenuItem's "icon-data" property. See
+// [MenuItem.IconData].
 func MenuItemIconData(img image.Image) MenuItemProp {
 	return func(item *menuItemProps) {
 		var buf bytes.Buffer
@@ -350,6 +417,8 @@ func MenuItemIconData(img image.Image) MenuItemProp {
 	}
 }
 
+// MenuItemShortcut sets a MenuItem's "shortcut" property. See
+// [MenuItem.Shortcut].
 func MenuItemShortcut(shortcut [][]string) MenuItemProp {
 	return func(item *menuItemProps) {
 		item.props["shortcut"] = shortcut
@@ -357,6 +426,8 @@ func MenuItemShortcut(shortcut [][]string) MenuItemProp {
 	}
 }
 
+// MenuItemToggleType sets a MenuItem's "toggle-type" property. See
+// [MenuItem.ToggleType].
 func MenuItemToggleType(t MenuToggleType) MenuItemProp {
 	return func(item *menuItemProps) {
 		item.props["toggle-type"] = t
@@ -364,6 +435,8 @@ func MenuItemToggleType(t MenuToggleType) MenuItemProp {
 	}
 }
 
+// MenuItemToggleState sets a MenuItem's "toggle-state" property. See
+// [MenuItem.ToggleState].
 func MenuItemToggleState(state MenuToggleState) MenuItemProp {
 	return func(item *menuItemProps) {
 		item.props["toggle-state"] = state
@@ -371,6 +444,8 @@ func MenuItemToggleState(state MenuToggleState) MenuItemProp {
 	}
 }
 
+// MenuItemVendorProp sets a vendor-specific custom property with the
+// given vendor and property name. See [MenuItem.VendorProp].
 func MenuItemVendorProp(vendor, prop string, value any) MenuItemProp {
 	return func(item *menuItemProps) {
 		name := vendorPropName(vendor, prop)
@@ -379,6 +454,7 @@ func MenuItemVendorProp(vendor, prop string, value any) MenuItemProp {
 	}
 }
 
+// MenuItemHandler sets the event handler for a MenuItem.
 func MenuItemHandler(handler MenuEventHandler) MenuItemProp {
 	return func(item *menuItemProps) {
 		item.handler = handler

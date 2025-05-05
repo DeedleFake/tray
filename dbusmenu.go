@@ -236,6 +236,11 @@ const (
 	Notice MenuStatus = "notice"
 )
 
+// MenuEventID is an identifier for the type of event that is being
+// sent to a menu's event handler. The values defined in this package
+// are not the only possible values. In particular, the spec defines a
+// format for vendor-specific custom values. These can be parsed with
+// the [ParseVendor] method.
 type MenuEventID string
 
 const (
@@ -245,6 +250,10 @@ const (
 	Closed  MenuEventID = "closed"
 )
 
+// ParseVendor parses a vendor-specific custom event ID. If id
+// contains such a value, it returns the vendor and event names as
+// parsed from it. If it does not contain such a value, the returned
+// bool will be false.
 func (id MenuEventID) ParseVendor() (vendor, event string, ok bool) {
 	e, ok := strings.CutPrefix(string(id), "x-")
 	if !ok {

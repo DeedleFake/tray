@@ -116,30 +116,40 @@ func (menu *Menu) updateLayout(nodes ...menuNode) error {
 	return errors.Join(errs...)
 }
 
+// TextDirection returns the current value of the menu's TextDirection
+// property.
 func (menu *Menu) TextDirection() TextDirection {
 	return menu.props.GetMust(menuInter, "TextDirection").(TextDirection)
 }
 
+// Status returns the current value of the menu's Status property.
 func (menu *Menu) Status() MenuStatus {
 	return menu.props.GetMust(menuInter, "Status").(MenuStatus)
 }
 
+// IconThemePath returns the current value of the menu's IconThemePath
+// property.
 func (menu *Menu) IconThemePath() []string {
 	return menu.props.GetMust(menuInter, "IconThemePath").([]string)
 }
 
+// ItemMenuTextDirection sets the item's associated menu's
+// TextDirection property.
 func ItemMenuTextDirection(direction TextDirection) ItemProp {
 	return func(item *itemProps) {
 		item.menu.props.SetMust(menuInter, "TextDirection", direction)
 	}
 }
 
+// ItemMenuStatus sets the item's associated menu's Status property.
 func ItemMenuStatus(status MenuStatus) ItemProp {
 	return func(item *itemProps) {
 		item.menu.props.SetMust(menuInter, "Status", status)
 	}
 }
 
+// ItemMenuIconThemePath sets the item's associated menu's
+// IconThemePath property.
 func ItemMenuIconThemePath(path []string) ItemProp {
 	return func(item *itemProps) {
 		item.menu.props.SetMust(menuInter, "IconThemePath", path)
