@@ -338,12 +338,14 @@ func (item *MenuItem) VendorProp(vendor, prop string) (any, bool) {
 
 // SetProps sets all of the given properties on the item.
 func (item *MenuItem) SetProps(props ...MenuItemProp) error {
-	defer item.menu.lock()()
 	defer item.lock()()
+	parent := item.getParent()
+
+	defer item.menu.lock()()
 
 	dirty, errs := item.applyProps(props)
 	errs = append(errs, item.emitPropertiesUpdated(dirty))
-	errs = append(errs, item.menu.updateLayout(item))
+	errs = append(errs, item.menu.updateLayout(parent))
 
 	return errors.Join(errs...)
 }
