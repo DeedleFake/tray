@@ -1,15 +1,17 @@
 package tray
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	"image/draw"
 	"os"
+	"slices"
 	"sync/atomic"
 
 	"deedles.dev/tray/internal/set"
-	"deedles.dev/ximage/format"
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
 	"github.com/godbus/dbus/v5/prop"
@@ -32,12 +34,12 @@ var (
 		"Status":              makeProp(Active),
 		"WindowId":            makeProp(uint32(0)),
 		"IconName":            makeProp(""),
-		"IconPixmap":          makeProp[[]pixmap](nil),
+		"IconPixmap":          makeProp[[]*Pixmap](nil),
 		"IconAccessibleDesc":  makeProp(""),
 		"OverlayIconName":     makeProp(""),
-		"OverlayIconPixmap":   makeProp[[]pixmap](nil),
+		"OverlayIconPixmap":   makeProp[[]*Pixmap](nil),
 		"AttentionIconName":   makeProp(""),
-		"AttentionIconPixmap": makeProp[[]pixmap](nil),
+		"AttentionIconPixmap": makeProp[[]*Pixmap](nil),
 		"AttentionMovieName":  makeProp(""),
 		"ToolTip":             makeProp(tooltip{}),
 		"ItemIsMenu":          makeProp(false),
@@ -258,7 +260,7 @@ func (item *Item) IconName() string {
 
 // IconPixmap returns the current value of the IconPixmap property.
 func (item *Item) IconPixmap() []image.Image {
-	pixmaps := item.props.GetMust(itemInter, "IconPixmap").([]pixmap)
+	pixmaps := item.props.GetMust(itemInter, "IconPixmap").([]*Pixmap)
 	return fromPixmaps(pixmaps)
 }
 
@@ -277,7 +279,7 @@ func (item *Item) OverlayIconName() string {
 // OverlayIconPixmap returns the current value of the
 // OverlayIconPixmap property.
 func (item *Item) OverlayIconPixmap() []image.Image {
-	pixmaps := item.props.GetMust(itemInter, "OverlayIconPixmap").([]pixmap)
+	pixmaps := item.props.GetMust(itemInter, "OverlayIconPixmap").([]*Pixmap)
 	return fromPixmaps(pixmaps)
 }
 
@@ -290,7 +292,7 @@ func (item *Item) AttentionIconName() string {
 // AttentionIconPixmap returns the current value of the
 // AttentionIconPixmap property.
 func (item *Item) AttentionIconPixmap() []image.Image {
-	pixmaps := item.props.GetMust(itemInter, "AttentionIconPixmap").([]pixmap)
+	pixmaps := item.props.GetMust(itemInter, "AttentionIconPixmap").([]*Pixmap)
 	return fromPixmaps(pixmaps)
 }
 
@@ -353,54 +355,116 @@ const (
 	Vertical   Orientation = "vertical"
 )
 
-type pixmap struct {
+// Pixmap is the raw wire format of StatusNotifierItem icon data. The
+// Data field is in a big endian [ARGB32] format. For convenience,
+// Pixmap implements [draw.Image] to simplify conversion to and from
+// other formats.
+type Pixmap struct {
 	Width, Height int
 	Data          []byte
 }
 
-func toPixmap(img image.Image) pixmap {
-	bounds := img.Bounds().Canon()
-	dst := &format.Image{
-		Format: ARGB32,
-		Rect:   bounds,
-		Pix:    make([]byte, ARGB32.Size()*bounds.Dx()*bounds.Dy()),
+// ToPixmap converts an [image.Image] into a Pixmap. If an icon is
+// being set to the same image more than once, it is more efficient to
+// convert it to a Pixmap in advance using this function and then pass
+// the result intead of the original image.Image.
+func ToPixmap(img image.Image) *Pixmap {
+	if p, ok := img.(*Pixmap); ok {
+		return p.Copy()
 	}
-	draw.Draw(dst, bounds, img, bounds.Min, draw.Src)
 
-	return pixmap{
+	bounds := img.Bounds()
+	dst := Pixmap{
 		Width:  bounds.Dx(),
 		Height: bounds.Dy(),
-		Data:   dst.Pix,
+		Data:   make([]byte, 4*bounds.Dx()*bounds.Dy()),
+	}
+	draw.Draw(&dst, bounds, img, image.Point{}, draw.Src)
+	return &dst
+}
+
+func (p *Pixmap) slice(x, y int) []byte {
+	i := (y * p.Width) + x
+	return p.Data[i : i+4]
+}
+
+func (p *Pixmap) ColorModel() color.Model {
+	return ARGB32Model
+}
+
+func (p *Pixmap) Bounds() image.Rectangle {
+	return image.Rect(0, 0, p.Width, p.Height)
+}
+
+func (p *Pixmap) At(x, y int) color.Color {
+	s := p.slice(x, y)
+	return ARGB32(binary.BigEndian.Uint32(s))
+}
+
+func (p *Pixmap) Set(x, y int, c color.Color) {
+	s := p.slice(x, y)
+	binary.BigEndian.PutUint32(s, uint32(argb32Model(c).(ARGB32)))
+}
+
+// Copy returns a deep copy of p.
+func (p *Pixmap) Copy() *Pixmap {
+	return &Pixmap{
+		Width:  p.Width,
+		Height: p.Height,
+		Data:   slices.Clone(p.Data),
 	}
 }
 
-func (p pixmap) Image() image.Image {
-	return &format.Image{
-		Format: ARGB32,
-		Rect:   image.Rect(0, 0, p.Width, p.Height),
-		Pix:    p.Data,
-	}
+// ARGB32 is the color.Color implementation used by [Pixmap].
+type ARGB32 uint32
+
+func (c ARGB32) RGBA() (r, g, b, a uint32) {
+	a = uint32(c >> 24 * 0xFFFF / 0xFF)
+	r = uint32(c>>16&0xFF) * a / 0xFF
+	g = uint32(c>>8&0xFF) * a / 0xFF
+	b = uint32(c&0xFF) * a / 0xFF
+	return
 }
 
-func fromPixmaps(pixmaps []pixmap) []image.Image {
+// ARGB32Model is the color.Model implementation used by [Pixmap].
+var ARGB32Model color.Model = color.ModelFunc(argb32Model)
+
+func argb32Model(c color.Color) color.Color {
+	if c, ok := c.(ARGB32); ok {
+		return c
+	}
+
+	r, g, b, a := c.RGBA()
+	if a == 0 {
+		return ARGB32(0)
+	}
+
+	r = (r * 0xFF / a) << 16
+	g = (g * 0xFF / a) << 8
+	b = b * 0xFF / a
+	a = (a * 0xFF / 0xFFFF) << 24
+	return ARGB32(r | g | b | a)
+}
+
+func fromPixmaps(pixmaps []*Pixmap) []image.Image {
 	images := make([]image.Image, 0, len(pixmaps))
 	for _, p := range pixmaps {
-		images = append(images, p.Image())
+		images = append(images, p)
 	}
 	return images
 }
 
-func toPixmaps(images []image.Image) []pixmap {
-	pixmaps := make([]pixmap, 0, len(images))
+func toPixmaps(images []image.Image) []*Pixmap {
+	pixmaps := make([]*Pixmap, 0, len(images))
 	for _, img := range images {
-		pixmaps = append(pixmaps, toPixmap(img))
+		pixmaps = append(pixmaps, ToPixmap(img))
 	}
 	return pixmaps
 }
 
 type tooltip struct {
 	IconName           string
-	IconPixmap         []pixmap
+	IconPixmap         []*Pixmap
 	Title, Description string
 }
 
