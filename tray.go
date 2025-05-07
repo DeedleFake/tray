@@ -6,7 +6,6 @@
 package tray
 
 import (
-	"encoding/binary"
 	"log/slog"
 	"maps"
 	"os"
@@ -81,37 +80,4 @@ func sliceRemove[S ~[]T, T comparable](s S, v T) S {
 		return s
 	}
 	return slices.Delete(s, i, i+1)
-}
-
-type formatARGB32 struct{}
-
-// ARGB32 is an implementation of [format.Format] that handles the
-// ARBG32 format used by StatusNotifierItem for Pixmap data. It is
-// exported for convenience.
-var ARGB32 formatARGB32
-
-func (formatARGB32) String() string { return "ARGB32" }
-
-func (formatARGB32) Size() int { return 4 }
-
-func (formatARGB32) Read(data []byte) (r, g, b, a uint32) {
-	n := binary.BigEndian.Uint32(data)
-	a = (n >> 24 * 0xFFFF / 0xFF)
-	r = (n >> 16 & 0xFF) * a / 0xFF
-	g = (n >> 8 & 0xFF) * a / 0xFF
-	b = (n & 0xFF) * a / 0xFF
-	return
-}
-
-func (formatARGB32) Write(buf []byte, r, g, b, a uint32) {
-	if a == 0 {
-		copy(buf, []byte{0, 0, 0, 0})
-		return
-	}
-
-	r = (r * 0xFF / a) << 16
-	g = (g * 0xFF / a) << 8
-	b = b * 0xFF / a
-	a = (a * 0xFF / 0xFFFF) << 24
-	binary.BigEndian.PutUint32(buf, r|g|b|a)
 }
