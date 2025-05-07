@@ -369,7 +369,10 @@ type Pixmap struct {
 // convert it to a Pixmap in advance using this function and then pass
 // the result intead of the original image.Image.
 func ToPixmap(img image.Image) Pixmap {
-	if p, ok := img.(Pixmap); ok {
+	switch p := img.(type) {
+	case Pixmap:
+		return p.Copy()
+	case *Pixmap:
 		return p.Copy()
 	}
 
