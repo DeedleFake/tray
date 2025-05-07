@@ -6,7 +6,7 @@
 package tray
 
 import (
-	"fmt"
+	"encoding/binary"
 	"log/slog"
 	"maps"
 	"os"
@@ -37,16 +37,6 @@ func dbusCall(obj dbus.BusObject, method string, flags dbus.Flags, args ...any) 
 		)
 	}
 	return call
-}
-
-func endianSwap(data []byte) {
-	if len(data)%4 != 0 {
-		panic(fmt.Errorf("len(data) %% 4 != 0, len(data) == %v", len(data)))
-	}
-
-	for i := 0; i < len(data); i += 4 {
-		slices.Reverse(data[i : i+4])
-	}
 }
 
 func makeProp[T any](v T) *prop.Prop {
@@ -91,4 +81,34 @@ func sliceRemove[S ~[]T, T comparable](s S, v T) S {
 		return s
 	}
 	return slices.Delete(s, i, i+1)
+}
+
+type formatARGB32 struct{}
+
+var argb32 formatARGB32
+
+func (formatARGB32) String() string { return "ARGB8888" }
+
+func (formatARGB32) Size() int { return 4 }
+
+func (formatARGB32) Read(data []byte) (r, g, b, a uint32) {
+	n := binary.BigEndian.Uint32(data)
+	a = (n >> 24 * 0xFFFF / 0xFF)
+	r = (n >> 16 & 0xFF) * a / 0xFF
+	g = (n >> 8 & 0xFF) * a / 0xFF
+	b = (n & 0xFF) * a / 0xFF
+	return
+}
+
+func (formatARGB32) Write(buf []byte, r, g, b, a uint32) {
+	if a == 0 {
+		copy(buf, []byte{0, 0, 0, 0})
+		return
+	}
+
+	r = (r * 0xFF / a) << 16
+	g = (g * 0xFF / a) << 8
+	b = b * 0xFF / a
+	a = (a * 0xFF / 0xFFFF) << 24
+	binary.BigEndian.PutUint32(buf, r|g|b|a)
 }
