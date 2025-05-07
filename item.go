@@ -361,9 +361,9 @@ type pixmap struct {
 func toPixmap(img image.Image) pixmap {
 	bounds := img.Bounds().Canon()
 	dst := &format.Image{
-		Format: argb32,
+		Format: ARGB32,
 		Rect:   bounds,
-		Pix:    make([]byte, argb32.Size()*bounds.Dx()*bounds.Dy()),
+		Pix:    make([]byte, ARGB32.Size()*bounds.Dx()*bounds.Dy()),
 	}
 	draw.Draw(dst, bounds, img, bounds.Min, draw.Src)
 
@@ -376,7 +376,7 @@ func toPixmap(img image.Image) pixmap {
 
 func (p pixmap) Image() image.Image {
 	return &format.Image{
-		Format: argb32,
+		Format: ARGB32,
 		Rect:   image.Rect(0, 0, p.Width, p.Height),
 		Pix:    p.Data,
 	}

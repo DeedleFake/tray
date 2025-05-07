@@ -85,9 +85,12 @@ func sliceRemove[S ~[]T, T comparable](s S, v T) S {
 
 type formatARGB32 struct{}
 
-var argb32 formatARGB32
+// ARGB32 is an implementation of [format.Format] that handles the
+// ARBG32 format used by StatusNotifierItem for Pixmap data. It is
+// exported for convenience.
+var ARGB32 formatARGB32
 
-func (formatARGB32) String() string { return "ARGB8888" }
+func (formatARGB32) String() string { return "ARGB32" }
 
 func (formatARGB32) Size() int { return 4 }
 
