@@ -150,18 +150,29 @@ func (menu *Menu) IconThemePath() []string {
 	return menu.props.GetMust(menuInter, "IconThemePath").([]string)
 }
 
+func (item *itemProps) setMenu(prop string, v any) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			logger.Error("panic setting menu property", "property", prop, "value", v, "err", r)
+		}
+	}()
+
+	item.menu.props.SetMust(menuInter, prop, v)
+}
+
 // ItemMenuTextDirection sets the item's associated menu's
 // TextDirection property.
 func ItemMenuTextDirection(direction TextDirection) ItemProp {
 	return func(item *itemProps) {
-		item.menu.props.SetMust(menuInter, "TextDirection", direction)
+		item.setMenu("TextDirection", direction)
 	}
 }
 
 // ItemMenuStatus sets the item's associated menu's Status property.
 func ItemMenuStatus(status MenuStatus) ItemProp {
 	return func(item *itemProps) {
-		item.menu.props.SetMust(menuInter, "Status", status)
+		item.setMenu("Status", status)
 	}
 }
 
@@ -169,7 +180,7 @@ func ItemMenuStatus(status MenuStatus) ItemProp {
 // IconThemePath property.
 func ItemMenuIconThemePath(path []string) ItemProp {
 	return func(item *itemProps) {
-		item.menu.props.SetMust(menuInter, "IconThemePath", path)
+		item.setMenu("IconThemePath", path)
 	}
 }
 

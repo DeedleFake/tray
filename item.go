@@ -479,8 +479,19 @@ type itemProps struct {
 
 func (item *itemProps) set(prop string, v any) {
 	for _, inter := range itemInters {
-		item.props.SetMust(inter, prop, v)
+		item.setInter(inter, prop, v)
 	}
+}
+
+func (item *itemProps) setInter(inter, prop string, v any) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			logger.Error("panic setting item property", "interface", inter, "property", prop, "value", v, "err", r)
+		}
+	}()
+
+	item.props.SetMust(inter, prop, v)
 }
 
 func (item *itemProps) mark(change string) {
