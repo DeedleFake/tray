@@ -24,7 +24,7 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
-	icon = img
+	icon = tray.ToPixmap(img)
 }
 
 func onTrayActivate(x, y int) error {
