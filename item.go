@@ -34,12 +34,12 @@ var (
 		"Status":              makeProp(Active),
 		"WindowId":            makeProp(uint32(0)),
 		"IconName":            makeProp(""),
-		"IconPixmap":          makeProp[[]*Pixmap](nil),
+		"IconPixmap":          makeProp[[]Pixmap](nil),
 		"IconAccessibleDesc":  makeProp(""),
 		"OverlayIconName":     makeProp(""),
-		"OverlayIconPixmap":   makeProp[[]*Pixmap](nil),
+		"OverlayIconPixmap":   makeProp[[]Pixmap](nil),
 		"AttentionIconName":   makeProp(""),
-		"AttentionIconPixmap": makeProp[[]*Pixmap](nil),
+		"AttentionIconPixmap": makeProp[[]Pixmap](nil),
 		"AttentionMovieName":  makeProp(""),
 		"ToolTip":             makeProp(tooltip{}),
 		"ItemIsMenu":          makeProp(false),
@@ -260,7 +260,7 @@ func (item *Item) IconName() string {
 
 // IconPixmap returns the current value of the IconPixmap property.
 func (item *Item) IconPixmap() []image.Image {
-	pixmaps := item.props.GetMust(itemInter, "IconPixmap").([]*Pixmap)
+	pixmaps := item.props.GetMust(itemInter, "IconPixmap").([]Pixmap)
 	return fromPixmaps(pixmaps)
 }
 
@@ -279,7 +279,7 @@ func (item *Item) OverlayIconName() string {
 // OverlayIconPixmap returns the current value of the
 // OverlayIconPixmap property.
 func (item *Item) OverlayIconPixmap() []image.Image {
-	pixmaps := item.props.GetMust(itemInter, "OverlayIconPixmap").([]*Pixmap)
+	pixmaps := item.props.GetMust(itemInter, "OverlayIconPixmap").([]Pixmap)
 	return fromPixmaps(pixmaps)
 }
 
@@ -292,7 +292,7 @@ func (item *Item) AttentionIconName() string {
 // AttentionIconPixmap returns the current value of the
 // AttentionIconPixmap property.
 func (item *Item) AttentionIconPixmap() []image.Image {
-	pixmaps := item.props.GetMust(itemInter, "AttentionIconPixmap").([]*Pixmap)
+	pixmaps := item.props.GetMust(itemInter, "AttentionIconPixmap").([]Pixmap)
 	return fromPixmaps(pixmaps)
 }
 
@@ -368,8 +368,8 @@ type Pixmap struct {
 // being set to the same image more than once, it is more efficient to
 // convert it to a Pixmap in advance using this function and then pass
 // the result intead of the original image.Image.
-func ToPixmap(img image.Image) *Pixmap {
-	if p, ok := img.(*Pixmap); ok {
+func ToPixmap(img image.Image) Pixmap {
+	if p, ok := img.(Pixmap); ok {
 		return p.Copy()
 	}
 
@@ -380,23 +380,23 @@ func ToPixmap(img image.Image) *Pixmap {
 		Data:   make([]byte, 4*bounds.Dx()*bounds.Dy()),
 	}
 	draw.Draw(&dst, bounds, img, image.Point{}, draw.Src)
-	return &dst
+	return dst
 }
 
-func (p *Pixmap) slice(x, y int) []byte {
-	i := (y * p.Width) + x
+func (p Pixmap) slice(x, y int) []byte {
+	i := 4 * ((y * p.Width) + x)
 	return p.Data[i : i+4]
 }
 
-func (p *Pixmap) ColorModel() color.Model {
+func (p Pixmap) ColorModel() color.Model {
 	return ARGB32Model
 }
 
-func (p *Pixmap) Bounds() image.Rectangle {
+func (p Pixmap) Bounds() image.Rectangle {
 	return image.Rect(0, 0, p.Width, p.Height)
 }
 
-func (p *Pixmap) At(x, y int) color.Color {
+func (p Pixmap) At(x, y int) color.Color {
 	s := p.slice(x, y)
 	return ARGB32(binary.BigEndian.Uint32(s))
 }
@@ -407,8 +407,8 @@ func (p *Pixmap) Set(x, y int, c color.Color) {
 }
 
 // Copy returns a deep copy of p.
-func (p *Pixmap) Copy() *Pixmap {
-	return &Pixmap{
+func (p Pixmap) Copy() Pixmap {
+	return Pixmap{
 		Width:  p.Width,
 		Height: p.Height,
 		Data:   slices.Clone(p.Data),
@@ -419,10 +419,11 @@ func (p *Pixmap) Copy() *Pixmap {
 type ARGB32 uint32
 
 func (c ARGB32) RGBA() (r, g, b, a uint32) {
-	a = uint32(c >> 24 * 0xFFFF / 0xFF)
-	r = uint32(c>>16&0xFF) * a / 0xFF
-	g = uint32(c>>8&0xFF) * a / 0xFF
-	b = uint32(c&0xFF) * a / 0xFF
+	n := uint32(c)
+	a = (n >> 24 * 0xFFFF / 0xFF)
+	r = (n >> 16 & 0xFF) * a / 0xFF
+	g = (n >> 8 & 0xFF) * a / 0xFF
+	b = (n & 0xFF) * a / 0xFF
 	return
 }
 
@@ -446,7 +447,7 @@ func argb32Model(c color.Color) color.Color {
 	return ARGB32(r | g | b | a)
 }
 
-func fromPixmaps(pixmaps []*Pixmap) []image.Image {
+func fromPixmaps(pixmaps []Pixmap) []image.Image {
 	images := make([]image.Image, 0, len(pixmaps))
 	for _, p := range pixmaps {
 		images = append(images, p)
@@ -454,8 +455,8 @@ func fromPixmaps(pixmaps []*Pixmap) []image.Image {
 	return images
 }
 
-func toPixmaps(images []image.Image) []*Pixmap {
-	pixmaps := make([]*Pixmap, 0, len(images))
+func toPixmaps(images []image.Image) []Pixmap {
+	pixmaps := make([]Pixmap, 0, len(images))
 	for _, img := range images {
 		pixmaps = append(pixmaps, ToPixmap(img))
 	}
@@ -464,7 +465,7 @@ func toPixmaps(images []image.Image) []*Pixmap {
 
 type tooltip struct {
 	IconName           string
-	IconPixmap         []*Pixmap
+	IconPixmap         []Pixmap
 	Title, Description string
 }
 
