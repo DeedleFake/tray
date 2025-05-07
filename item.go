@@ -411,11 +411,8 @@ func (p *Pixmap) Set(x, y int, c color.Color) {
 
 // Copy returns a deep copy of p.
 func (p Pixmap) Copy() Pixmap {
-	return Pixmap{
-		Width:  p.Width,
-		Height: p.Height,
-		Data:   slices.Clone(p.Data),
-	}
+	p.Data = slices.Clone(p.Data)
+	return p
 }
 
 // ARGB32 is the color.Color implementation used by [Pixmap].
