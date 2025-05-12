@@ -458,7 +458,9 @@ func fromPixmaps(pixmaps []Pixmap) []image.Image {
 func toPixmaps(images []image.Image) []Pixmap {
 	pixmaps := make([]Pixmap, 0, len(images))
 	for _, img := range images {
-		pixmaps = append(pixmaps, ToPixmap(img))
+		if img != nil {
+			pixmaps = append(pixmaps, ToPixmap(img))
+		}
 	}
 	return pixmaps
 }
