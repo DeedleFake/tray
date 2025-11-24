@@ -25,6 +25,7 @@ func init() {
 }
 
 func dbusCall(obj dbus.BusObject, method string, flags dbus.Flags, args ...any) *dbus.Call {
+	logger.Info("dbus call", "method", method, "flags", flags, "args", args)
 	call := obj.Call(method, flags, args...)
 	if call.Err != nil {
 		errName := dbusErrorName(call.Err)
