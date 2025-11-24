@@ -6,6 +6,7 @@
 package tray
 
 import (
+	"errors"
 	"log/slog"
 	"maps"
 	"os"
@@ -26,16 +27,26 @@ func init() {
 func dbusCall(obj dbus.BusObject, method string, flags dbus.Flags, args ...any) *dbus.Call {
 	call := obj.Call(method, flags, args...)
 	if call.Err != nil {
+		errName := dbusErrorName(call.Err)
 		logger.Warn(
 			"dbus call failed",
 			"destination", call.Destination,
 			"path", call.Path,
 			"method", call.Method,
 			"args", call.Args,
+			"errName", errName,
 			"err", call.Err,
 		)
 	}
 	return call
+}
+
+func dbusErrorName(err error) string {
+	var dbusError dbus.Error
+	if errors.As(err, &dbusError) {
+		return dbusError.Name
+	}
+	return "<not applicable>"
 }
 
 func makeProp[T any](v T) *prop.Prop {
