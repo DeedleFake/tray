@@ -7,10 +7,12 @@ package tray
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"os"
 	"slices"
+	"sync/atomic"
 
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/prop"
@@ -93,3 +95,28 @@ func sliceRemove[S ~[]T, T comparable](s S, v T) S {
 	}
 	return slices.Delete(s, i, i+1)
 }
+
+type serialGenerator struct {
+	prev uint32
+}
+
+func withSerialGenerator() dbus.ConnOption {
+	switch generator := os.Getenv("TRAY_SERIAL_GENERATOR"); generator {
+	case "default":
+		logger.Info("using serial generator", "generator", "default")
+		return func(*dbus.Conn) error { return nil }
+
+	case "atomic", "":
+		logger.Info("using serial generator", "generator", "atomic")
+		return dbus.WithSerialGenerator(&serialGenerator{})
+
+	default:
+		panic(fmt.Errorf("unknown serial generator %q", generator))
+	}
+}
+
+func (g *serialGenerator) GetSerial() uint32 {
+	return atomic.AddUint32(&g.prev, 1)
+}
+
+func (g *serialGenerator) RetireSerial(uint32) {}

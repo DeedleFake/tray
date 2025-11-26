@@ -68,7 +68,7 @@ type Item struct {
 // them set will likely not be useful, however, if it isn't completely
 // broken depending on the desktop environment.
 func New(props ...ItemProp) (*Item, error) {
-	conn, err := dbus.ConnectSessionBus()
+	conn, err := dbus.ConnectSessionBus(withSerialGenerator())
 	if err != nil {
 		return nil, fmt.Errorf("connect to session bus: %w", err)
 	}
