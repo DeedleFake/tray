@@ -18,9 +18,12 @@ import (
 )
 
 const (
-	itemPath   dbus.ObjectPath = "/StatusNotifierItem"
-	itemInter                  = "org.freedesktop.StatusNotifierItem"
-	itemInter2                 = "org.kde.StatusNotifierItem"
+	itemPath dbus.ObjectPath = "/StatusNotifierItem"
+)
+
+const (
+	itemInter  = "org.freedesktop.StatusNotifierItem"
+	itemInter2 = "org.kde.StatusNotifierItem"
 )
 
 var (
@@ -55,11 +58,11 @@ var (
 // Item is a single StatusNotifierItem. Each item roughly corresponds
 // to a single icon in the system tray.
 type Item struct {
-	conn      *dbus.Conn
-	props     *prop.Properties
-	menu      *Menu
-	snw, name string
-	handler   atomic.Pointer[Handler]
+	conn    *dbus.Conn
+	props   *prop.Properties
+	menu    *Menu
+	name    string
+	handler atomic.Pointer[Handler]
 }
 
 // New creates a new Item configured with the given props. It is
