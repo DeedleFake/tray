@@ -74,10 +74,17 @@ func (item *MenuItem) AddChild(props ...MenuItemProp) (*MenuItem, error) {
 	defer child.lock()()
 
 	dirty, errs := child.applyProps(props)
+
+	// setChildren may change the parent's "children-display" property
+	// (e.g. when adding the first child it becomes "submenu"). Record
+	// which properties changed so they can be emitted.
+	parentDirty := item.setChildren(append(item.children, child.id))
+
 	errs = append(errs, item.menu.updateLayout(item))
 	errs = append(errs, child.emitPropertiesUpdated(dirty))
-
-	item.setChildren(append(item.children, child.id))
+	if len(parentDirty) > 0 {
+		errs = append(errs, item.emitPropertiesUpdated(slices.Values(parentDirty)))
+	}
 
 	return child, errors.Join(errs...)
 }
@@ -96,11 +103,18 @@ func (item *MenuItem) Remove() error {
 		defer parent.lock()()
 	}
 
-	parent.setChildren(sliceRemove(parent.getChildren(), item.id))
+	parentDirty := parent.setChildren(sliceRemove(parent.getChildren(), item.id))
 
 	delete(item.menu.nodes, item.id)
 
-	return item.menu.updateLayout(parent)
+	var errs []error
+	errs = append(errs, item.menu.updateLayout(parent))
+	if len(parentDirty) > 0 {
+		if p, ok := parent.(*MenuItem); ok {
+			errs = append(errs, p.emitPropertiesUpdated(slices.Values(parentDirty)))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func appendChild(menu *Menu, dst menuNode, child *MenuItem) error {
@@ -119,12 +133,24 @@ func appendChild(menu *Menu, dst menuNode, child *MenuItem) error {
 		defer parent.lock()()
 	}
 
-	parent.setChildren(sliceRemove(parent.getChildren(), child.id))
-	dst.setChildren(append(dst.getChildren(), child.id))
+	parentDirty := parent.setChildren(sliceRemove(parent.getChildren(), child.id))
+	dstDirty := dst.setChildren(append(dst.getChildren(), child.id))
 	child.parent = dst.getID()
 
 	updates := slices.Compact([]menuNode{dst, parent})
-	return menu.updateLayout(updates...)
+	var errs []error
+	errs = append(errs, menu.updateLayout(updates...))
+	if len(parentDirty) > 0 {
+		if p, ok := parent.(*MenuItem); ok {
+			errs = append(errs, p.emitPropertiesUpdated(slices.Values(parentDirty)))
+		}
+	}
+	if len(dstDirty) > 0 {
+		if d, ok := dst.(*MenuItem); ok {
+			errs = append(errs, d.emitPropertiesUpdated(slices.Values(dstDirty)))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // AppendChild makes child the last child of the root of the menu
@@ -168,12 +194,24 @@ func (item *MenuItem) MoveBefore(sibling *MenuItem) error {
 		i = len(dc)
 	}
 
-	src.setChildren(sliceRemove(src.getChildren(), item.id))
-	dst.setChildren(slices.Insert(dc, i, item.id))
+	srcDirty := src.setChildren(sliceRemove(src.getChildren(), item.id))
+	dstDirty := dst.setChildren(slices.Insert(dc, i, item.id))
 	item.parent = dst.getID()
 
 	updates := slices.Compact([]menuNode{dst, src})
-	return item.menu.updateLayout(updates...)
+	var errs []error
+	errs = append(errs, item.menu.updateLayout(updates...))
+	if len(srcDirty) > 0 {
+		if s, ok := src.(*MenuItem); ok {
+			errs = append(errs, s.emitPropertiesUpdated(slices.Values(srcDirty)))
+		}
+	}
+	if len(dstDirty) > 0 {
+		if d, ok := dst.(*MenuItem); ok {
+			errs = append(errs, d.emitPropertiesUpdated(slices.Values(dstDirty)))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (item *MenuItem) applyProps(props []MenuItemProp) (iter.Seq[string], []error) {
@@ -532,11 +570,21 @@ func (item *MenuItem) getChildren() []int {
 	return item.children
 }
 
-func (item *MenuItem) setChildren(c []int) {
+// setChildren updates the item's children list. If this causes the
+// item's "children-display" property to change (e.g. by adding the
+// first child or removing the last), the property name is returned so
+// that the caller can emit a PropertiesUpdated signal for it.
+func (item *MenuItem) setChildren(c []int) []string {
 	item.children = c
-	if len(item.children) == 0 {
-		item.props["children-display"] = ""
-		return
+
+	var want string
+	if len(item.children) > 0 {
+		want = "submenu"
 	}
-	item.props["children-display"] = "submenu"
+
+	if cur, _ := item.props["children-display"].(string); cur == want {
+		return nil
+	}
+	item.props["children-display"] = want
+	return []string{"children-display"}
 }
