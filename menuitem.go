@@ -75,7 +75,7 @@ func (item *MenuItem) AddChild(props ...MenuItemProp) (*MenuItem, error) {
 
 	dirty, errs := child.applyProps(props)
 	errs = append(errs, item.menu.updateLayout(item))
-	errs = append(errs, item.emitPropertiesUpdated(dirty))
+	errs = append(errs, child.emitPropertiesUpdated(dirty))
 
 	item.setChildren(append(item.children, child.id))
 
