@@ -1,0 +1,234 @@
+#!/usr/bin/env bash
+# Drive a tray item the way a desktop tray host does, on a private
+# session bus with a StatusNotifierWatcher stand-in.
+#
+# Commands: launch, doctor, env, introspect, item-props, menu-props,
+# layout, group-props, prop, event, about-to-show, activate,
+# secondary-activate, context-menu, scroll, monitor, monitor-stop,
+# logs, bus, cleanup.
+#
+# Cleanup kills only the process groups recorded at launch. It never
+# kills by name, so a user's own tray apps and session bus are untouched.
+set -euo pipefail
+
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_DIR="$(cd "$SKILL_DIR/../../.." && pwd)"
+RUNS="$SKILL_DIR/runs"
+CURRENT="$RUNS/current"
+ITEM_PATH=/StatusNotifierItem
+MENU_PATH=/StatusNotifierMenu
+WATCHER=org.kde.StatusNotifierWatcher
+
+die() { echo "control-tray: $*" >&2; exit 1; }
+
+run_dir() {
+	[[ -L $CURRENT ]] || die "no current run; run 'control-tray launch' first"
+	readlink -f "$CURRENT"
+}
+
+load() {
+	RUN="$(run_dir)"
+	# shellcheck disable=SC1091
+	# shellcheck disable=SC1091,SC2153
+	source "$RUN/state"
+	export DBUS_SESSION_BUS_ADDRESS="$BUS_ADDRESS"
+	unset DBUS_SYSTEM_BUS_ADDRESS
+}
+
+alive() { kill -0 "$1" 2>/dev/null; }
+
+g() { gdbus "$@"; }
+
+item_name() {
+	local out
+	out="$(g call -e -d $WATCHER -o /StatusNotifierWatcher -m org.freedesktop.DBus.Properties.Get $WATCHER RegisteredStatusNotifierItems 2>/dev/null)" || return 1
+	# (<['org.freedesktop.StatusNotifierItem-123-1/StatusNotifierItem']>,)
+	sed -n "s/.*\['\([^'/]*\)\/StatusNotifierItem'.*/\1/p" <<<"$out" | head -n1
+}
+
+need_item() {
+	ITEM="$(item_name)"
+	[[ -n $ITEM ]] || die "no item registered with the watcher; run 'control-tray doctor'"
+}
+
+wait_for() { # timeout cmd...
+	local t=$1; shift
+	local end=$((SECONDS + t))
+	while ((SECONDS < end)); do
+		if "$@" >/dev/null 2>&1; then return 0; fi
+		sleep 0.2
+	done
+	return 1
+}
+
+cmd_launch() {
+	local example=./examples timeout=120
+	while (($#)); do
+		case $1 in
+		--example) example=$2; shift 2 ;;
+		--timeout) timeout=$2; shift 2 ;;
+		*) die "launch: unknown flag $1" ;;
+		esac
+	done
+	if [[ -L $CURRENT ]] && [[ -f $CURRENT/state ]]; then
+		# shellcheck disable=SC1091
+		(source "$CURRENT/state"; alive "$BUS_PID") && die "a verify run is already live ($(readlink -f "$CURRENT")); run cleanup first"
+	fi
+	for t in go dbus-daemon gdbus setsid; do command -v $t >/dev/null || die "missing $t"; done
+
+	local id; id="$(date +%Y%m%d-%H%M%S)-$$"
+	RUN="$RUNS/$id"
+	mkdir -p "$RUN"
+	ln -sfn "$RUN" "$CURRENT"
+
+	echo "building $example and the watcher stand-in into $RUN" >&2
+	if ! (cd "$REPO_DIR" && go build -o "$RUN/item" "$example" && go build -o "$RUN/watcher" ./.cursor/skills/verify-tray/scripts/watcher) >"$RUN/build.log" 2>&1; then
+		cat "$RUN/build.log" >&2
+		rm -rf "$RUN" "$CURRENT"
+		die "build failed"
+	fi
+
+	setsid dbus-daemon --session --nofork --nopidfile --address="unix:path=$RUN/bus" \
+		--print-address=1 >"$RUN/bus.address" 2>"$RUN/bus.log" &
+	BUS_PID=$!
+	wait_for 10 test -s "$RUN/bus.address" || die "dbus-daemon did not start; see $RUN/bus.log"
+	BUS_ADDRESS="$(head -n1 "$RUN/bus.address")"
+	export DBUS_SESSION_BUS_ADDRESS="$BUS_ADDRESS"
+	unset DBUS_SYSTEM_BUS_ADDRESS
+
+	setsid "$RUN/watcher" >"$RUN/watcher.log" 2>&1 &
+	WATCHER_PID=$!
+	wait_for 10 grep -q 'watcher ready' "$RUN/watcher.log" || die "watcher not ready; see $RUN/watcher.log"
+
+	# Force deterministic logging and locale for the item process.
+	setsid env TRAY_DEBUG=1 LANG=C.UTF-8 LC_ALL=C.UTF-8 LANGUAGE=en "$RUN/item" >"$RUN/item.log" 2>&1 &
+	ITEM_PID=$!
+
+	cat >"$RUN/state" <<STATE
+BUS_ADDRESS='$BUS_ADDRESS'
+BUS_PID=$BUS_PID
+WATCHER_PID=$WATCHER_PID
+ITEM_PID=$ITEM_PID
+EXAMPLE='$example'
+STATE
+
+	if ! wait_for "$timeout" grep -q RegisterStatusNotifierItem "$RUN/watcher.log"; then
+		echo "item never registered; logs kept in $RUN" >&2
+		tail -n 20 "$RUN/item.log" >&2 || true
+		exit 1
+	fi
+	echo "ready: run=$RUN"
+	echo "export DBUS_SESSION_BUS_ADDRESS='$BUS_ADDRESS'"
+}
+
+cmd_doctor() {
+	load
+	local item="" id="" owned=false bus=false w=false i=false
+	alive "$BUS_PID" && bus=true
+	alive "$WATCHER_PID" && w=true
+	alive "$ITEM_PID" && i=true
+	item="$(item_name || true)"
+	if [[ -n $item ]] && g call -e -d org.freedesktop.DBus -o /org/freedesktop/DBus -m org.freedesktop.DBus.NameHasOwner "$item" 2>/dev/null | grep -q true; then
+		owned=true
+		id="$(g call -e -d "$item" -o $ITEM_PATH -m org.freedesktop.DBus.Properties.Get org.kde.StatusNotifierItem Id 2>/dev/null || true)"
+	fi
+	cat <<JSON
+{
+  "run": "$RUN",
+  "bus_address": "$BUS_ADDRESS",
+  "bus_alive": $bus,
+  "watcher_alive": $w,
+  "item_process_alive": $i,
+  "registered_item": "$item",
+  "item_name_owned": $owned,
+  "item_id": "${id//[\"\\]/}",
+  "example": "${EXAMPLE:-}"
+}
+JSON
+	$bus && $w && $i && $owned
+}
+
+cmd_env() { load; echo "export DBUS_SESSION_BUS_ADDRESS='$BUS_ADDRESS'"; }
+
+cmd_introspect() { load; need_item; g introspect -e -d "$ITEM" -o "${1:-$ITEM_PATH}"; }
+
+cmd_item_props() { load; need_item; g call -e -d "$ITEM" -o $ITEM_PATH -m org.freedesktop.DBus.Properties.GetAll "${1:-org.kde.StatusNotifierItem}"; }
+
+cmd_menu_props() { load; need_item; g call -e -d "$ITEM" -o $MENU_PATH -m org.freedesktop.DBus.Properties.GetAll com.canonical.dbusmenu; }
+
+cmd_prop() { load; need_item; g call -e -d "$ITEM" -o $ITEM_PATH -m org.freedesktop.DBus.Properties.Get org.kde.StatusNotifierItem "$1"; }
+
+menu() { g call -e -d "$ITEM" -o $MENU_PATH -m "com.canonical.dbusmenu.$1" "${@:2}"; }
+
+cmd_layout() { load; need_item; menu GetLayout "int32 ${1:-0}" "int32 ${2:--1}" '@as []'; }
+
+cmd_group_props() { load; need_item; menu GetGroupProperties "[${1:-}]" '@as []'; }
+
+cmd_event() {
+	load; need_item
+	local id=$1 ev=${2:-clicked}
+	menu Event "$id" "$ev" '<0>' "$(date +%s)"
+}
+
+cmd_about_to_show() { load; need_item; menu AboutToShow "$1"; }
+
+sni() { load; need_item; g call -e -d "$ITEM" -o $ITEM_PATH -m "org.kde.StatusNotifierItem.$1" "${@:2}"; }
+
+cmd_monitor() {
+	load
+	local path=""
+	while (($#)); do
+		case $1 in
+		--path) path=$2; shift 2 ;;
+		*) die "monitor: unknown flag $1" ;;
+		esac
+	done
+	[[ -n $path ]] || die "monitor needs --path"
+	need_item
+	mkdir -p "$(dirname "$path")"
+	setsid stdbuf -oL gdbus monitor -e -d "$ITEM" >"$path" 2>&1 &
+	echo "MONITOR_PID=$!" >>"$RUN/state"
+	sleep 0.5
+	echo "monitoring $ITEM -> $path"
+}
+
+cmd_monitor_stop() {
+	load
+	[[ -n ${MONITOR_PID:-} ]] && kill -- -"$MONITOR_PID" 2>/dev/null || true
+	sed -i '/^MONITOR_PID=/d' "$RUN/state"
+}
+
+cmd_logs() { load; echo "$RUN/item.log"; echo "$RUN/watcher.log"; }
+
+cmd_bus() { load; [[ ${1:-} == -- ]] && shift; "$@"; }
+
+cmd_cleanup() {
+	local keep=false
+	[[ ${1:-} == --keep-run ]] && keep=true
+	[[ -L $CURRENT ]] || { echo "nothing to clean"; return 0; }
+	RUN="$(readlink -f "$CURRENT")"
+	if [[ -f $RUN/state ]]; then
+		# shellcheck disable=SC1091
+		source "$RUN/state"
+		for p in ${MONITOR_PID:-} $ITEM_PID $WATCHER_PID $BUS_PID; do
+			kill -TERM -- -"$p" 2>/dev/null || true
+		done
+		sleep 0.5
+		for p in ${MONITOR_PID:-} $ITEM_PID $WATCHER_PID $BUS_PID; do
+			kill -KILL -- -"$p" 2>/dev/null || true
+		done
+	fi
+	rm -f "$CURRENT"
+	if $keep; then echo "stopped; kept $RUN"; else rm -rf "$RUN"; echo "stopped; removed $RUN"; fi
+	rmdir "$RUNS" 2>/dev/null || true
+}
+
+case ${1:-} in
+launch | doctor | env | introspect | logs | cleanup | monitor | layout | event | prop | bus) c=$1; shift; "cmd_$c" "$@" ;;
+item-props | menu-props | group-props | about-to-show | monitor-stop) c=${1//-/_}; shift; "cmd_$c" "$@" ;;
+activate) shift; sni Activate "${1:-0}" "${2:-0}" ;;
+secondary-activate) shift; sni SecondaryActivate "${1:-0}" "${2:-0}" ;;
+context-menu) shift; sni ContextMenu "${1:-0}" "${2:-0}" ;;
+scroll) shift; sni Scroll "${1:-1}" "${2:-vertical}" ;;
+*) sed -n '2,10p' "$0" >&2; exit 2 ;;
+esac
