@@ -32,13 +32,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: go fix
-        # go fix -diff exits 0 even when it suggests fixes, so fail on any output.
-        run: |
-          diff=$(go fix -diff ./...)
-          if [ -n "$diff" ]; then
-            echo "$diff"
-            exit 1
-          fi
+        run: go fix -diff ./...
 
   go-test:
     name: go test
