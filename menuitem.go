@@ -86,17 +86,17 @@ func (item *MenuItem) AddChild(props ...MenuItemProp) (*MenuItem, error) {
 // parent is another MenuItem and item is its only child, the parent
 // is converted from a sub-menu item back into a regular one.
 func (item *MenuItem) Remove() error {
+	defer item.menu.lock()()
+
 	parent := item.getParent()
 	if parent == nil {
 		return nil
 	}
-	defer parent.lock()()
+	if parent != item.menu {
+		defer parent.lock()()
+	}
 
 	parent.setChildren(sliceRemove(parent.getChildren(), item.id))
-
-	if parent != item.menu {
-		defer item.menu.lock()()
-	}
 
 	delete(item.menu.nodes, item.id)
 
@@ -104,24 +104,24 @@ func (item *MenuItem) Remove() error {
 }
 
 func appendChild(menu *Menu, dst menuNode, child *MenuItem) error {
+	defer menu.lock()()
+
 	parent := child.getParent()
 	if parent == nil {
 		// TODO: Allow appending children who have previously been removed?
 		return nil
 	}
 
-	defer dst.lock()()
-	if parent != dst {
+	if dst != menu {
+		defer dst.lock()()
+	}
+	if parent != dst && parent != menu {
 		defer parent.lock()()
 	}
 
 	parent.setChildren(sliceRemove(parent.getChildren(), child.id))
 	dst.setChildren(append(dst.getChildren(), child.id))
 	child.parent = dst.getID()
-
-	if dst != menu && parent != menu {
-		defer menu.lock()()
-	}
 
 	updates := slices.Compact([]menuNode{dst, parent})
 	return menu.updateLayout(updates...)
@@ -146,6 +146,8 @@ func (item *MenuItem) AppendChild(child *MenuItem) error {
 // necessary, this method will transfer item from its current parent
 // to sibling's parent.
 func (item *MenuItem) MoveBefore(sibling *MenuItem) error {
+	defer item.menu.lock()()
+
 	dst := sibling.getParent()
 	src := item.getParent()
 	if dst == nil || src == nil {
@@ -153,8 +155,10 @@ func (item *MenuItem) MoveBefore(sibling *MenuItem) error {
 		return nil
 	}
 
-	defer dst.lock()()
-	if dst != src {
+	if dst != item.menu {
+		defer dst.lock()()
+	}
+	if src != dst && src != item.menu {
 		defer src.lock()()
 	}
 
@@ -167,10 +171,6 @@ func (item *MenuItem) MoveBefore(sibling *MenuItem) error {
 	src.setChildren(sliceRemove(src.getChildren(), item.id))
 	dst.setChildren(slices.Insert(dc, i, item.id))
 	item.parent = dst.getID()
-
-	if dst != item.menu && src != item.menu {
-		defer item.menu.lock()()
-	}
 
 	updates := slices.Compact([]menuNode{dst, src})
 	return item.menu.updateLayout(updates...)
@@ -338,10 +338,10 @@ func (item *MenuItem) VendorProp(vendor, prop string) (any, bool) {
 
 // SetProps sets all of the given properties on the item.
 func (item *MenuItem) SetProps(props ...MenuItemProp) error {
-	defer item.lock()()
-	parent := item.getParent()
-
 	defer item.menu.lock()()
+	defer item.lock()()
+
+	parent := item.getParent()
 
 	dirty, errs := item.applyProps(props)
 	errs = append(errs, item.emitPropertiesUpdated(dirty))
@@ -505,13 +505,12 @@ func vendorPropName(vendor, prop string) string {
 	return fmt.Sprintf("x-%v-%v", vendor, prop)
 }
 
+// getParent returns the parent of item, or nil if item has been
+// removed. The caller must hold the menu's lock.
 func (item *MenuItem) getParent() menuNode {
 	if item.parent == 0 {
 		return item.menu
 	}
-
-	item.menu.m.RLock()
-	defer item.menu.m.RUnlock()
 
 	p, ok := item.menu.nodes[item.parent]
 	if !ok {
