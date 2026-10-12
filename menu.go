@@ -180,6 +180,7 @@ func ItemMenuStatus(status MenuStatus) ItemProp {
 // IconThemePath property.
 func ItemMenuIconThemePath(path []string) ItemProp {
 	return func(item *itemProps) {
+		item.setMenu("IconThemePath", []string(nil))
 		item.setMenu("IconThemePath", path)
 	}
 }
