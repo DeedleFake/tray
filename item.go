@@ -482,6 +482,12 @@ type itemProps struct {
 	dirty set.Set[string]
 }
 
+// set sets prop on every item interface.
+//
+// prop.Properties stores into the existing value in place and Get
+// returns that value without copying it, so overwriting a slice
+// property races with a concurrent encode of it. Set a slice property
+// to nil first so that the following set allocates a fresh slice.
 func (item *itemProps) set(prop string, v any) {
 	for _, inter := range itemInters {
 		item.setInter(inter, prop, v)
@@ -551,6 +557,7 @@ func ItemIconName(name string) ItemProp {
 // ItemIconPixmap sets the IconPixmap property to the given value.
 func ItemIconPixmap(images ...image.Image) ItemProp {
 	return func(item *itemProps) {
+		item.set("IconPixmap", []Pixmap(nil))
 		item.set("IconPixmap", toPixmaps(images))
 		item.mark("NewIcon")
 	}
@@ -578,6 +585,7 @@ func ItemOverlayIconName(name string) ItemProp {
 // given value.
 func ItemOverlayIconPixmap(images ...image.Image) ItemProp {
 	return func(item *itemProps) {
+		item.set("OverlayIconPixmap", []Pixmap(nil))
 		item.set("OverlayIconPixmap", toPixmaps(images))
 		item.mark("NewOverlayIcon")
 	}
@@ -596,6 +604,7 @@ func ItemAttentionIconName(name string) ItemProp {
 // the given value.
 func ItemAttentionIconPixmap(images ...image.Image) ItemProp {
 	return func(item *itemProps) {
+		item.set("AttentionIconPixmap", []Pixmap(nil))
 		item.set("AttentionIconPixmap", toPixmaps(images))
 		item.mark("NewAttentionIcon")
 	}
