@@ -189,14 +189,13 @@ func (item *MenuItem) MoveBefore(sibling *MenuItem) error {
 		defer src.lock()()
 	}
 
-	dc := dst.getChildren()
-	i := slices.Index(dc, sibling.id)
-	if i < 0 {
-		i = len(dc)
-	}
-
 	srcDirty := src.setChildren(sliceRemove(src.getChildren(), item.id))
-	dstDirty := dst.setChildren(slices.Insert(dc, i, item.id))
+	dstChildren := dst.getChildren()
+	i := slices.Index(dstChildren, sibling.id)
+	if i < 0 {
+		i = len(dstChildren)
+	}
+	dstDirty := dst.setChildren(slices.Insert(dstChildren, i, item.id))
 	item.parent = dst.getID()
 
 	updates := slices.Compact([]menuNode{dst, src})
