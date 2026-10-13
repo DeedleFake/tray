@@ -114,9 +114,7 @@ func main() {
 	m.Unlock()
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		n := 0
@@ -138,7 +136,7 @@ func main() {
 				m.Unlock()
 			}
 		}
-	}()
+	})
 
 	time.AfterFunc(5*time.Second, func() {
 		m.Lock()
