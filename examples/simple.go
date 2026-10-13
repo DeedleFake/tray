@@ -104,7 +104,39 @@ func main() {
 		})),
 	)
 
+	ticks, _ := item.Menu().AddChild(tray.MenuItemLabel("Ticks: 0"))
+	check, _ := item.Menu().AddChild(
+		tray.MenuItemLabel("Check"),
+		tray.MenuItemToggleType(tray.Checkmark),
+		tray.MenuItemToggleState(tray.Off),
+	)
+
 	m.Unlock()
+
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		n := 0
+		on := false
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				n++
+				on = !on
+				state := tray.Off
+				if on {
+					state = tray.On
+				}
+				m.Lock()
+				ticks.SetProps(tray.MenuItemLabel(fmt.Sprintf("Ticks: %d", n)))
+				check.SetProps(tray.MenuItemToggleState(state))
+				m.Unlock()
+			}
+		}
+	})
 
 	time.AfterFunc(5*time.Second, func() {
 		m.Lock()
@@ -114,4 +146,5 @@ func main() {
 	})
 
 	<-done
+	wg.Wait()
 }

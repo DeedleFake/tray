@@ -274,6 +274,60 @@ func TestMoveBeforeAcrossParents(t *testing.T) {
 	}
 }
 
+func TestSetPropsEmitsPropertyChangesOnly(t *testing.T) {
+	menu, buf := newCaptureMenu(t)
+	item, err := menu.AddChild(
+		MenuItemLabel("Quit"),
+		MenuItemToggleType(Checkmark),
+		MenuItemToggleState(Off),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mark := len(buf.waitQuiet())
+
+	if err := item.SetProps(MenuItemLabel("Quit"), MenuItemToggleState(Off)); err != nil {
+		t.Fatal(err)
+	}
+	if sigs := decodeSignals(signalBytes(buf, mark)); len(sigs) != 0 {
+		t.Fatalf("unchanged SetProps signals = %+v", sigs)
+	}
+
+	mark = len(buf.waitQuiet())
+	if err := item.SetProps(MenuItemLabel("Exit"), MenuItemToggleState(On)); err != nil {
+		t.Fatal(err)
+	}
+	sigs := decodeSignals(signalBytes(buf, mark))
+	if len(sigs) != 1 || sigs[0].member != "ItemsPropertiesUpdated" {
+		t.Fatalf("changed SetProps signals = %+v", sigs)
+	}
+	rows, ok := sigs[0].body[0].([][]any)
+	if !ok || len(rows) != 1 || len(rows[0]) < 2 {
+		t.Fatalf("ItemsPropertiesUpdated body = %#v", sigs[0].body)
+	}
+	props, ok := rows[0][1].(map[string]dbus.Variant)
+	if !ok {
+		t.Fatalf("updated props = %#v", rows[0][1])
+	}
+	if props["label"].Value() != "Exit" || props["toggle-state"].Value() != int32(On) {
+		t.Fatalf("updated props = %#v", props)
+	}
+
+	mark = len(buf.waitQuiet())
+	if _, err := item.AddChild(MenuItemLabel("child")); err != nil {
+		t.Fatal(err)
+	}
+	var sawLayout bool
+	for _, sig := range decodeSignals(signalBytes(buf, mark)) {
+		if sig.member == "LayoutUpdated" {
+			sawLayout = true
+		}
+	}
+	if !sawLayout {
+		t.Fatal("AddChild did not emit LayoutUpdated")
+	}
+}
+
 func TestSetPropsAfterParentRemoved(t *testing.T) {
 	menu, _ := newCaptureMenu(t)
 	parent, err := menu.AddChild(MenuItemLabel("parent"))

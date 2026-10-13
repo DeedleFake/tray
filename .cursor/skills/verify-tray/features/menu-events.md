@@ -1,6 +1,6 @@
 # Menu events
 
-Clicking a menu entry in the tray sends `Event(id, "clicked", data, timestamp)`. The example's handlers print, add and remove a `Print` entry, toggle `Add`/`Remove` enabled state, and exit; tray announces each change with `LayoutUpdated` and `ItemsPropertiesUpdated`.
+Clicking a menu entry in the tray sends `Event(id, "clicked", data, timestamp)`. The example's handlers print, add and remove a `Print` entry, toggle `Add`/`Remove` enabled state, and exit. Adding or removing an entry emits `LayoutUpdated`. Changing `enabled`, a label, or a toggle state emits `ItemsPropertiesUpdated` and does not emit `LayoutUpdated`.
 
 ## Sub-features
 
@@ -23,8 +23,8 @@ Preconditions:
 - **Record.** Run `control-tray monitor --path artifacts/menu-events/signals.txt` and `control-tray layout > artifacts/menu-events/before.layout.txt`.
 - **Print.** Run `control-tray event 5 clicked`. Reply `()`. `item.log` (path from `control-tray logs`) gains `Print clicked.`.
 - **Remove.** Run `control-tray event 3 clicked`, then `control-tray layout > artifacts/menu-events/after-remove.layout.txt`. Id `5` is gone, `2 Add` is `'enabled': <true>`, `3 Remove` is `'enabled': <false>`, the revision went up.
-- **Add.** Run `control-tray event 2 clicked`, then `control-tray layout > artifacts/menu-events/after-add.layout.txt`. A new `Print` (id `7`) sits between `4` and `6`. `Add` is disabled and `Remove` enabled again.
-- **Signals.** Run `control-tray monitor-stop`. `signals.txt` has `com.canonical.dbusmenu.LayoutUpdated (uint32 <rev>, 0)` and `(uint32 <rev>, 1)` lines and `com.canonical.dbusmenu.ItemsPropertiesUpdated` lines for ids 2, 3, and 7.
+- **Add.** Run `control-tray event 2 clicked`, then `control-tray layout > artifacts/menu-events/after-add.layout.txt`. A new `Print` (id `9`) sits between `4` and `6`. `Add` is disabled and `Remove` enabled again.
+- **Signals.** Run `control-tray monitor-stop`. `signals.txt` has `com.canonical.dbusmenu.LayoutUpdated (uint32 <rev>, 0)` for the add and the remove, and `com.canonical.dbusmenu.ItemsPropertiesUpdated` lines for ids 2, 3, and 9. It does not have `LayoutUpdated` for parent `1`. `Ticks` and `Check` also emit `ItemsPropertiesUpdated` about once a second, without `LayoutUpdated`.
 - **Exit.** Last: run `control-tray event 6 clicked`, wait one second, run `control-tray doctor`. `item_process_alive` is false.
 - **Proof.** Before `cleanup`, `grep 'Print clicked\|menu method' <item.log> > artifacts/menu-events/item-log.txt`.
 

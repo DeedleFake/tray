@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"iter"
 	"maps"
+	"reflect"
 	"slices"
 	"sync"
 
@@ -234,6 +235,9 @@ func (item *MenuItem) emitPropertiesUpdated(props iter.Seq[string]) error {
 	for change := range props {
 		updated[change] = dbus.MakeVariant(item.props[change])
 	}
+	if len(updated) == 0 {
+		return nil
+	}
 
 	item.menu.dirty.Add(item.parent)
 
@@ -375,7 +379,6 @@ func (item *MenuItem) SetProps(props ...MenuItemProp) error {
 
 	dirty, errs := item.applyProps(props)
 	errs = append(errs, item.emitPropertiesUpdated(dirty))
-	errs = append(errs, item.menu.updateLayout(parent))
 
 	return errors.Join(errs...)
 }
@@ -423,6 +426,14 @@ func (item *menuItemProps) mark(change string) {
 	item.dirty.Add(change)
 }
 
+func (item *menuItemProps) setProp(name string, value, current any) {
+	if reflect.DeepEqual(current, value) {
+		return
+	}
+	item.props[name] = value
+	item.mark(name)
+}
+
 func (item *menuItemProps) catch(err error) {
 	item.errs = append(item.errs, err)
 }
@@ -431,7 +442,7 @@ func (item *menuItemProps) catch(err error) {
 // [MenuItem.Type].
 func MenuItemType(t MenuType) MenuItemProp {
 	return func(item *menuItemProps) {
-		item.props["type"] = t
+		item.setProp("type", t, mapLookup(item.props, "type", Standard))
 	}
 }
 
@@ -439,8 +450,7 @@ func MenuItemType(t MenuType) MenuItemProp {
 // [MenuItem.Label].
 func MenuItemLabel(label string) MenuItemProp {
 	return func(item *menuItemProps) {
-		item.props["label"] = label
-		item.mark("label")
+		item.setProp("label", label, mapLookup(item.props, "label", ""))
 	}
 }
 
@@ -448,8 +458,7 @@ func MenuItemLabel(label string) MenuItemProp {
 // [MenuItem.Enabled].
 func MenuItemEnabled(enabled bool) MenuItemProp {
 	return func(item *menuItemProps) {
-		item.props["enabled"] = enabled
-		item.mark("enabled")
+		item.setProp("enabled", enabled, mapLookup(item.props, "enabled", true))
 	}
 }
 
@@ -457,8 +466,7 @@ func MenuItemEnabled(enabled bool) MenuItemProp {
 // [MenuItem.Visible].
 func MenuItemVisible(visible bool) MenuItemProp {
 	return func(item *menuItemProps) {
-		item.props["visible"] = visible
-		item.mark("visible")
+		item.setProp("visible", visible, mapLookup(item.props, "visible", true))
 	}
 }
 
@@ -466,8 +474,7 @@ func MenuItemVisible(visible bool) MenuItemProp {
 // [MenuItem.IconName].
 func MenuItemIconName(name string) MenuItemProp {
 	return func(item *menuItemProps) {
-		item.props["icon-name"] = name
-		item.mark("icon-name")
+		item.setProp("icon-name", name, mapLookup(item.props, "icon-name", ""))
 	}
 }
 
@@ -482,8 +489,8 @@ func MenuItemIconData(img image.Image) MenuItemProp {
 			return
 		}
 
-		item.props["icon-data"] = buf.Bytes()
-		item.mark("icon-data")
+		next := buf.Bytes()
+		item.setProp("icon-data", next, mapLookup(item.props, "icon-data", []byte(nil)))
 	}
 }
 
@@ -491,8 +498,7 @@ func MenuItemIconData(img image.Image) MenuItemProp {
 // [MenuItem.Shortcut].
 func MenuItemShortcut(shortcut [][]string) MenuItemProp {
 	return func(item *menuItemProps) {
-		item.props["shortcut"] = shortcut
-		item.mark("shortcut")
+		item.setProp("shortcut", shortcut, mapLookup(item.props, "shortcut", [][]string(nil)))
 	}
 }
 
@@ -500,8 +506,7 @@ func MenuItemShortcut(shortcut [][]string) MenuItemProp {
 // [MenuItem.ToggleType].
 func MenuItemToggleType(t MenuToggleType) MenuItemProp {
 	return func(item *menuItemProps) {
-		item.props["toggle-type"] = t
-		item.mark("toggle-type")
+		item.setProp("toggle-type", t, mapLookup(item.props, "toggle-type", MenuToggleType("")))
 	}
 }
 
@@ -509,8 +514,7 @@ func MenuItemToggleType(t MenuToggleType) MenuItemProp {
 // [MenuItem.ToggleState].
 func MenuItemToggleState(state MenuToggleState) MenuItemProp {
 	return func(item *menuItemProps) {
-		item.props["toggle-state"] = state
-		item.mark("toggle-state")
+		item.setProp("toggle-state", state, mapLookup(item.props, "toggle-state", MenuToggleState(-1)))
 	}
 }
 
@@ -519,6 +523,10 @@ func MenuItemToggleState(state MenuToggleState) MenuItemProp {
 func MenuItemVendorProp(vendor, prop string, value any) MenuItemProp {
 	return func(item *menuItemProps) {
 		name := vendorPropName(vendor, prop)
+		if cur, ok := item.props[name]; ok {
+			item.setProp(name, value, cur)
+			return
+		}
 		item.props[name] = value
 		item.mark(name)
 	}
