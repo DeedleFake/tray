@@ -76,9 +76,6 @@ func (item *MenuItem) AddChild(props ...MenuItemProp) (*MenuItem, error) {
 
 	dirty, errs := child.applyProps(props)
 
-	// setChildren may change the parent's "children-display" property
-	// (e.g. when adding the first child it becomes "submenu"). Record
-	// which properties changed so they can be emitted.
 	parentDirty := item.setChildren(append(item.children, child.id))
 
 	errs = append(errs, item.menu.updateLayout(item))
