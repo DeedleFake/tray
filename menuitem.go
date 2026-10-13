@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"deedles.dev/tray/internal/set"
+	"github.com/godbus/dbus/v5"
 )
 
 // MenuItem is a single item in the menu of the tray item. The item
@@ -223,14 +224,9 @@ func (item *MenuItem) applyProps(props []MenuItemProp) (iter.Seq[string], []erro
 }
 
 func (item *MenuItem) emitPropertiesUpdated(props iter.Seq[string]) error {
-	type prop struct {
-		Name  string
-		Value any
-	}
-
 	type updatedProps struct {
 		ID    int
-		Props []prop
+		Props map[string]dbus.Variant
 	}
 
 	type removedProps struct {
@@ -238,12 +234,9 @@ func (item *MenuItem) emitPropertiesUpdated(props iter.Seq[string]) error {
 		Props []string
 	}
 
-	var updated []prop
+	updated := make(map[string]dbus.Variant)
 	for change := range props {
-		updated = append(updated, prop{
-			Name:  change,
-			Value: item.props[change],
-		})
+		updated[change] = dbus.MakeVariant(item.props[change])
 	}
 
 	item.menu.dirty.Add(item.parent)
