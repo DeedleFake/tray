@@ -76,7 +76,7 @@ Every command resolves the item's bus name through the watcher and prints the ra
 
 `$CTRL logs` prints the paths of `item.log` (the example's stdout plus `TRAY_DEBUG` logs of every method the item served) and `watcher.log`.
 
-Stable handles in `./examples`: menu ids `1` `Edit` (submenu), `2` `Add`, `3` `Remove`, `4` separator, `5` `Print`, `6` `Exit`. `Add` then `Remove` recreates `Print` with a new id (`7`, `8`, ...). Read ids from `layout` instead of assuming them after any mutation. Match on labels.
+Stable handles in `./examples`: menu ids `1` `Edit` (submenu), `2` `Add`, `3` `Remove`, `4` separator, `5` `Print`, `6` `Exit`, `7` `Ticks`, `8` `Check`. `Ticks` and `Check` change about once a second (`Ticks: N`, and `Check`'s toggle state). `Add` then `Remove` recreates `Print` with a new id (`9`, `10`, ...). Read ids from `layout` instead of assuming them after any mutation. Match on labels.
 
 ## Evidence
 

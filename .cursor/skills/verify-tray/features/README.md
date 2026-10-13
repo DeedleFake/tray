@@ -10,7 +10,7 @@ This directory is the maintained source for verifying the host-facing behavior o
 - Never drive an item on the user's session bus. Every command here uses the run's private bus.
 - Put proof under `.cursor/skills/verify-tray/artifacts/<feature>/`.
 
-Baseline layout of `./examples` (from `control-tray layout`): root `0` with `1 Edit` (submenu: `2 Add` disabled, `3 Remove`), `4` separator, `5 Print`, `6 Exit`.
+Baseline layout of `./examples` (from `control-tray layout`): root `0` with `1 Edit` (submenu: `2 Add` disabled, `3 Remove`), `4` separator, `5 Print`, `6 Exit`, then `7 Ticks` and `8 Check`. `Ticks` and `Check` change about once a second, so match those two by role rather than by the exact label or toggle state.
 
 ## Driving conventions
 

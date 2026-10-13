@@ -21,9 +21,9 @@ Preconditions:
 
 - `control-tray doctor` exits 0, five seconds after `launch`.
 
-- **Full tree.** Run `control-tray layout > artifacts/menu-layout/layout.txt`. Root children are `1 Edit` with `'children-display': <'submenu'>` containing `2 Add` (`'enabled': <false>`) and `3 Remove`, then `4` `'type': <'separator'>`, `5 Print`, `6 Exit`.
+- **Full tree.** Run `control-tray layout > artifacts/menu-layout/layout.txt`. Root children are `1 Edit` with `'children-display': <'submenu'>` containing `2 Add` (`'enabled': <false>`) and `3 Remove`, then `4` `'type': <'separator'>`, `5 Print`, `6 Exit`, `7` with a `Ticks:` label, and `8 Check` with `'toggle-type': <'checkmark'>`. The `Ticks` count and `Check` toggle state change about once a second.
 - **Submenu.** Run `control-tray layout 1 1`. The reply root is id `1` with children `2` and `3` only.
-- **Group props.** Run `control-tray group-props > artifacts/menu-layout/group.txt`. It lists ids 1 through 6 with the labels above. Run `control-tray group-props 2,6`. Only ids 2 and 6 come back.
+- **Group props.** Run `control-tray group-props > artifacts/menu-layout/group.txt`. It lists ids 1 through 8 with the labels above. `7` and `8` follow the live `Ticks` and `Check` values. Run `control-tray group-props 2,6`. Only ids 2 and 6 come back.
 - **Menu props.** Run `control-tray menu-props`. Reply is `{'Status': <'normal'>, 'IconThemePath': <@as []>, 'Version': <3>, 'TextDirection': <'ltr'>}` in any order.
 - **About to show.** Run `control-tray about-to-show 1`. Reply is `(false,)` right after a `layout` read.
 - **Proof.** Also save `control-tray introspect /StatusNotifierMenu` to `artifacts/menu-layout/introspect.txt`.
