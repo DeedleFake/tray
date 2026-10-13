@@ -201,7 +201,10 @@ type menuNode interface {
 	lock() func()
 	getID() int
 	getChildren() []int
-	setChildren([]int)
+	// setChildren updates the node's children list and returns the
+	// names of any properties that were changed as a result, so that
+	// callers can emit the appropriate PropertiesUpdated signals.
+	setChildren([]int) []string
 }
 
 func (menu *Menu) lock() func() {
@@ -217,6 +220,7 @@ func (menu *Menu) getChildren() []int {
 	return menu.children
 }
 
-func (menu *Menu) setChildren(c []int) {
+func (menu *Menu) setChildren(c []int) []string {
 	menu.children = c
+	return nil
 }

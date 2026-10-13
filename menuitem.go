@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"deedles.dev/tray/internal/set"
+	"github.com/godbus/dbus/v5"
 )
 
 // MenuItem is a single item in the menu of the tray item. The item
@@ -74,10 +75,14 @@ func (item *MenuItem) AddChild(props ...MenuItemProp) (*MenuItem, error) {
 	defer child.lock()()
 
 	dirty, errs := child.applyProps(props)
-	errs = append(errs, item.menu.updateLayout(item))
-	errs = append(errs, item.emitPropertiesUpdated(dirty))
 
-	item.setChildren(append(item.children, child.id))
+	parentDirty := item.setChildren(append(item.children, child.id))
+
+	errs = append(errs, item.menu.updateLayout(item))
+	errs = append(errs, child.emitPropertiesUpdated(dirty))
+	if len(parentDirty) > 0 {
+		errs = append(errs, item.emitPropertiesUpdated(slices.Values(parentDirty)))
+	}
 
 	return child, errors.Join(errs...)
 }
@@ -96,11 +101,18 @@ func (item *MenuItem) Remove() error {
 		defer parent.lock()()
 	}
 
-	parent.setChildren(sliceRemove(parent.getChildren(), item.id))
+	parentDirty := parent.setChildren(sliceRemove(parent.getChildren(), item.id))
 
 	delete(item.menu.nodes, item.id)
 
-	return item.menu.updateLayout(parent)
+	var errs []error
+	errs = append(errs, item.menu.updateLayout(parent))
+	if len(parentDirty) > 0 {
+		if p, ok := parent.(*MenuItem); ok {
+			errs = append(errs, p.emitPropertiesUpdated(slices.Values(parentDirty)))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func appendChild(menu *Menu, dst menuNode, child *MenuItem) error {
@@ -119,12 +131,24 @@ func appendChild(menu *Menu, dst menuNode, child *MenuItem) error {
 		defer parent.lock()()
 	}
 
-	parent.setChildren(sliceRemove(parent.getChildren(), child.id))
-	dst.setChildren(append(dst.getChildren(), child.id))
+	parentDirty := parent.setChildren(sliceRemove(parent.getChildren(), child.id))
+	dstDirty := dst.setChildren(append(dst.getChildren(), child.id))
 	child.parent = dst.getID()
 
 	updates := slices.Compact([]menuNode{dst, parent})
-	return menu.updateLayout(updates...)
+	var errs []error
+	errs = append(errs, menu.updateLayout(updates...))
+	if len(parentDirty) > 0 {
+		if p, ok := parent.(*MenuItem); ok {
+			errs = append(errs, p.emitPropertiesUpdated(slices.Values(parentDirty)))
+		}
+	}
+	if len(dstDirty) > 0 {
+		if d, ok := dst.(*MenuItem); ok {
+			errs = append(errs, d.emitPropertiesUpdated(slices.Values(dstDirty)))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // AppendChild makes child the last child of the root of the menu
@@ -162,18 +186,29 @@ func (item *MenuItem) MoveBefore(sibling *MenuItem) error {
 		defer src.lock()()
 	}
 
-	dc := dst.getChildren()
-	i := slices.Index(dc, sibling.id)
+	srcDirty := src.setChildren(sliceRemove(src.getChildren(), item.id))
+	dstChildren := dst.getChildren()
+	i := slices.Index(dstChildren, sibling.id)
 	if i < 0 {
-		i = len(dc)
+		i = len(dstChildren)
 	}
-
-	src.setChildren(sliceRemove(src.getChildren(), item.id))
-	dst.setChildren(slices.Insert(dc, i, item.id))
+	dstDirty := dst.setChildren(slices.Insert(dstChildren, i, item.id))
 	item.parent = dst.getID()
 
 	updates := slices.Compact([]menuNode{dst, src})
-	return item.menu.updateLayout(updates...)
+	var errs []error
+	errs = append(errs, item.menu.updateLayout(updates...))
+	if len(srcDirty) > 0 {
+		if s, ok := src.(*MenuItem); ok {
+			errs = append(errs, s.emitPropertiesUpdated(slices.Values(srcDirty)))
+		}
+	}
+	if len(dstDirty) > 0 {
+		if d, ok := dst.(*MenuItem); ok {
+			errs = append(errs, d.emitPropertiesUpdated(slices.Values(dstDirty)))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (item *MenuItem) applyProps(props []MenuItemProp) (iter.Seq[string], []error) {
@@ -185,14 +220,9 @@ func (item *MenuItem) applyProps(props []MenuItemProp) (iter.Seq[string], []erro
 }
 
 func (item *MenuItem) emitPropertiesUpdated(props iter.Seq[string]) error {
-	type prop struct {
-		Name  string
-		Value any
-	}
-
 	type updatedProps struct {
 		ID    int
-		Props []prop
+		Props map[string]dbus.Variant
 	}
 
 	type removedProps struct {
@@ -200,12 +230,9 @@ func (item *MenuItem) emitPropertiesUpdated(props iter.Seq[string]) error {
 		Props []string
 	}
 
-	var updated []prop
+	updated := make(map[string]dbus.Variant)
 	for change := range props {
-		updated = append(updated, prop{
-			Name:  change,
-			Value: item.props[change],
-		})
+		updated[change] = dbus.MakeVariant(item.props[change])
 	}
 
 	item.menu.dirty.Add(item.parent)
@@ -342,6 +369,9 @@ func (item *MenuItem) SetProps(props ...MenuItemProp) error {
 	defer item.lock()()
 
 	parent := item.getParent()
+	if parent == nil {
+		return fmt.Errorf("menu item %d has no parent", item.id)
+	}
 
 	dirty, errs := item.applyProps(props)
 	errs = append(errs, item.emitPropertiesUpdated(dirty))
@@ -532,11 +562,21 @@ func (item *MenuItem) getChildren() []int {
 	return item.children
 }
 
-func (item *MenuItem) setChildren(c []int) {
+// setChildren updates the item's children list. If this causes the
+// item's "children-display" property to change (e.g. by adding the
+// first child or removing the last), the property name is returned so
+// that the caller can emit a PropertiesUpdated signal for it.
+func (item *MenuItem) setChildren(c []int) []string {
 	item.children = c
-	if len(item.children) == 0 {
-		item.props["children-display"] = ""
-		return
+
+	var want string
+	if len(item.children) > 0 {
+		want = "submenu"
 	}
-	item.props["children-display"] = "submenu"
+
+	if cur, _ := item.props["children-display"].(string); cur == want {
+		return nil
+	}
+	item.props["children-display"] = want
+	return []string{"children-display"}
 }
