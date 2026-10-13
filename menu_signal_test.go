@@ -292,4 +292,7 @@ func TestSetPropsAfterParentRemoved(t *testing.T) {
 	if err == nil || err.Error() != want {
 		t.Fatalf("SetProps err = %v, want %s", err, want)
 	}
+	if child.props["label"] != "child" {
+		t.Fatalf("label = %#v", child.props["label"])
+	}
 }

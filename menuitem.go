@@ -372,6 +372,9 @@ func (item *MenuItem) SetProps(props ...MenuItemProp) error {
 	defer item.lock()()
 
 	parent := item.getParent()
+	if parent == nil {
+		return fmt.Errorf("menu item %d has no parent", item.id)
+	}
 
 	dirty, errs := item.applyProps(props)
 	errs = append(errs, item.emitPropertiesUpdated(dirty))
