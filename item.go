@@ -63,6 +63,7 @@ type Item struct {
 	menu    *Menu
 	name    string
 	handler atomic.Pointer[Handler]
+	replies pendingReplies
 }
 
 // New creates a new Item configured with the given props. It is
@@ -71,14 +72,12 @@ type Item struct {
 // them set will likely not be useful, however, if it isn't completely
 // broken depending on the desktop environment.
 func New(props ...ItemProp) (*Item, error) {
-	conn, err := dbus.ConnectSessionBus(withSerialGenerator())
+	item := new(Item)
+	conn, err := dbus.ConnectSessionBus(item.connOptions()...)
 	if err != nil {
 		return nil, fmt.Errorf("connect to session bus: %w", err)
 	}
-
-	item := Item{
-		conn: conn,
-	}
+	item.conn = conn
 
 	err = item.initProtoData()
 	if err != nil {
@@ -90,7 +89,7 @@ func New(props ...ItemProp) (*Item, error) {
 		return nil, fmt.Errorf("export StatusNotifierItem: %w", err)
 	}
 
-	return &item, nil
+	return item, nil
 }
 
 func (item *Item) initProtoData() error {

@@ -221,16 +221,6 @@ func (item *MenuItem) applyProps(props []MenuItemProp) (iter.Seq[string], []erro
 }
 
 func (item *MenuItem) emitPropertiesUpdated(props iter.Seq[string]) error {
-	type updatedProps struct {
-		ID    int
-		Props map[string]dbus.Variant
-	}
-
-	type removedProps struct {
-		ID    int
-		Props []string
-	}
-
 	updated := make(map[string]dbus.Variant)
 	for change := range props {
 		updated[change] = dbus.MakeVariant(item.props[change])
@@ -240,6 +230,23 @@ func (item *MenuItem) emitPropertiesUpdated(props iter.Seq[string]) error {
 	}
 
 	item.menu.dirty.Add(item.parent)
+	item.menu.item.replies.changed(item.id)
+
+	return item.sendPropertiesUpdated(updated)
+}
+
+// sendPropertiesUpdated sends the given property values in an
+// ItemsPropertiesUpdated signal.
+func (item *MenuItem) sendPropertiesUpdated(updated map[string]dbus.Variant) error {
+	type updatedProps struct {
+		ID    int
+		Props map[string]dbus.Variant
+	}
+
+	type removedProps struct {
+		ID    int
+		Props []string
+	}
 
 	return item.menu.item.conn.Emit(
 		menuPath,

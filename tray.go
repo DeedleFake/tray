@@ -97,18 +97,26 @@ func sliceRemove[S ~[]T, T comparable](s S, v T) S {
 }
 
 type serialGenerator struct {
-	prev uint32
+	prev    uint32
+	retired func(serial uint32)
 }
 
-func withSerialGenerator() dbus.ConnOption {
+// connOptions returns the options for the item's D-Bus connection.
+// The default serial generator has no hook for a written reply, so
+// with it the item does not resend properties that a reply overwrote.
+func (item *Item) connOptions() []dbus.ConnOption {
 	switch generator := os.Getenv("TRAY_SERIAL_GENERATOR"); generator {
 	case "default":
 		logger.Info("using serial generator", "generator", "default")
-		return func(*dbus.Conn) error { return nil }
+		return nil
 
 	case "atomic", "":
 		logger.Info("using serial generator", "generator", "atomic")
-		return dbus.WithSerialGenerator(&serialGenerator{})
+		return []dbus.ConnOption{
+			dbus.WithSerialGenerator(&serialGenerator{retired: item.replyWritten}),
+			dbus.WithIncomingInterceptor(item.replies.received),
+			dbus.WithOutgoingInterceptor(item.replies.sending),
+		}
 
 	default:
 		panic(fmt.Errorf("unknown serial generator %q", generator))
@@ -119,4 +127,9 @@ func (g *serialGenerator) GetSerial() uint32 {
 	return atomic.AddUint32(&g.prev, 1)
 }
 
-func (g *serialGenerator) RetireSerial(uint32) {}
+// RetireSerial is called by godbus once it no longer needs a serial.
+// For a message it sends that is not a method call, that is right
+// after it writes the message.
+func (g *serialGenerator) RetireSerial(serial uint32) {
+	g.retired(serial)
+}

@@ -154,7 +154,11 @@ func newHostedMenu(t *testing.T, stall *replyStall) (*Menu, dbus.BusObject, *hos
 
 	addr := startBus(t)
 	item := &Item{}
-	conn, err := dbus.Connect(addr, dbus.WithOutgoingInterceptor(stall.intercept))
+	opts := append(item.connOptions(), dbus.WithOutgoingInterceptor(func(msg *dbus.Message) {
+		item.replies.sending(msg)
+		stall.intercept(msg)
+	}))
+	conn, err := dbus.Connect(addr, opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
