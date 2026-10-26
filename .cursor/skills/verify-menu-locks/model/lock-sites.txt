@@ -96,6 +96,9 @@ menuitem.go MenuItem.MoveBefore
 menuitem.go MenuItem.applyProps
   for _, p := range props > prop-callback
 menuitem.go MenuItem.emitPropertiesUpdated
+  call changed
+  call sendPropertiesUpdated
+menuitem.go MenuItem.sendPropertiesUpdated
   emit
 menuitem.go MenuItem.RequestActivation
   emit
@@ -137,3 +140,22 @@ menuitem.go MenuItem.SetProps
 menuitem.go MenuItem.lock
   item.m.Lock
   item.m.Unlock
+replies.go pendingReplies.received
+  p.m.Lock
+  defer p.m.Unlock
+replies.go pendingReplies.sending
+  p.m.Lock
+  defer p.m.Unlock
+replies.go pendingReplies.changed
+  p.m.Lock
+  defer p.m.Unlock
+replies.go pendingReplies.written
+  p.m.Lock
+  defer p.m.Unlock
+replies.go Item.replyWritten
+  call written
+  menu.m.RLock
+  defer menu.m.RUnlock
+  for id := range changed > node.m.RLock
+  for id := range changed > call sendPropertiesUpdated
+  for id := range changed > node.m.RUnlock

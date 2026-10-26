@@ -66,6 +66,9 @@ RUnlock(m, at) == <<S("RUnlock", m, at)>>
 \* conn.Emit and godbus's reply. Not steps, see the top.
 Emit(at) == <<>>
 Reply == <<>>
+\* pendingReplies.m (replies.go) is not a mutex here either. Each of its
+\* methods locks it, reads or writes its maps, and unlocks it with no
+\* other step in between, so a goroutine that holds it waits on nothing.
 
 RECURSIVE Cat(_)
 Cat(s) == IF s = <<>> THEN <<>> ELSE Head(s) \o Cat(Tail(s))
@@ -216,6 +219,29 @@ MenuHandler == Lock(Root, "menu.go ItemMenuHandler: defer item.menu.lock()()")
 (* Host calls, dbusmenu.go. godbus handleCall runs each on its own         *)
 (* goroutine and writes the reply after the method returns.                *)
 
+\* The reply to GetLayout, GetGroupProperties, or GetProperty. godbus
+\* writes it, then calls serialGenerator.RetireSerial, which calls
+\* Item.replyWritten (tray.go, replies.go). With r = 1, an
+\* emitPropertiesUpdated overlapped the call, so replyWritten RLocks
+\* Menu.m and then each changed item while it resends the item's
+\* properties. With r = 0 it returns before any lock. While it holds
+\* Menu.m for reading no item writer can be waiting, since each takes
+\* Menu.m first, so locking every item in id order covers any subset in
+\* any map order.
+PropsReply(r) ==
+  Reply
+  \o (IF r = 1
+      THEN RLock(Root, "replies.go Item.replyWritten: menu.m.RLock()")
+           \o <<Plan("Resend", 0, 0, "replies.go Item.replyWritten: menu.nodes[id]")>>
+      ELSE <<>>)
+ResendTail ==
+  LET ns == Sorted(nodes) IN
+  Cat([i \in 1..Len(ns) |->
+         RLock(ns[i], "replies.go Item.replyWritten: node.m.RLock()")
+         \o Emit("menuitem.go MenuItem.sendPropertiesUpdated: conn.Emit ItemsPropertiesUpdated")
+         \o RUnlock(ns[i], "replies.go Item.replyWritten: node.m.RUnlock()")])
+  \o RUnlock(Root, "replies.go Item.replyWritten: deferred menu.m.RUnlock()")
+
 \* GetLayout(parentID, -1): Lock Menu.m, then buildLayout and
 \* buildChildren read-lock each item while they walk its children, so an
 \* item stays read-locked until its whole subtree is built.
@@ -228,34 +254,34 @@ Walk(n, d) ==
                \o inner
                \o RUnlock(n, "dbusmenu.go buildLayout: deferred item.m.RUnlock()")
 
-GetLayoutHead(pid) == Lock(Root, "dbusmenu.go GetLayout: menu.m.Lock()")
-                      \o <<Plan("GetLayout", pid, 0, "dbusmenu.go GetLayout: menu.nodes[parentID]")>>
-GetLayoutTail(pid) ==
+GetLayoutHead(pid, r) == Lock(Root, "dbusmenu.go GetLayout: menu.m.Lock()")
+                         \o <<Plan("GetLayout", pid, r, "dbusmenu.go GetLayout: menu.nodes[parentID]")>>
+GetLayoutTail(pid, r) ==
   (IF pid # Root /\ pid \notin nodes THEN <<>> ELSE Walk(pid, MaxItems + 1))
   \o Unlock(Root, "dbusmenu.go GetLayout: deferred menu.m.Unlock()")
-  \o Reply
+  \o PropsReply(r)
 
 \* GetGroupProperties(nil, ..): RLock Menu.m, then each item in turn.
-GroupHead == RLock(Root, "dbusmenu.go GetGroupProperties: menu.m.RLock()")
-             \o <<Plan("Group", 0, 0, "dbusmenu.go GetGroupProperties: range over menu.nodes")>>
-GroupTail ==
+GroupHead(r) == RLock(Root, "dbusmenu.go GetGroupProperties: menu.m.RLock()")
+                \o <<Plan("Group", 0, r, "dbusmenu.go GetGroupProperties: range over menu.nodes")>>
+GroupTail(r) ==
   LET ns == Sorted(nodes) IN
   Cat([i \in 1..Len(ns) |->
          RLock(ns[i], "dbusmenu.go GetGroupProperties: item.m.RLock()")
          \o RUnlock(ns[i], "dbusmenu.go GetGroupProperties: item.m.RUnlock()")])
   \o RUnlock(Root, "dbusmenu.go GetGroupProperties: deferred menu.m.RUnlock()")
-  \o Reply
+  \o PropsReply(r)
 
 \* GetProperty(id, ..): RLock Menu.m, then the item.
-PropHead(x) == RLock(Root, "dbusmenu.go GetProperty: menu.m.RLock()")
-               \o <<Plan("Prop", x, 0, "dbusmenu.go GetProperty: menu.nodes[id]")>>
-PropTail(x) ==
+PropHead(x, r) == RLock(Root, "dbusmenu.go GetProperty: menu.m.RLock()")
+                  \o <<Plan("Prop", x, r, "dbusmenu.go GetProperty: menu.nodes[id]")>>
+PropTail(x, r) ==
   (IF x \in nodes
    THEN RLock(x, "dbusmenu.go GetProperty: item.m.RLock()")
         \o RUnlock(x, "dbusmenu.go GetProperty: deferred item.m.RUnlock()")
    ELSE <<>>)
   \o RUnlock(Root, "dbusmenu.go GetProperty: deferred menu.m.RUnlock()")
-  \o Reply
+  \o PropsReply(r)
 
 \* Event(id, ..): event calls getHandler, which read-locks Menu.m and the
 \* item and returns the handler. The handler then runs with whatever event
@@ -294,9 +320,10 @@ Expand(st) ==
     [] st.k = "Remove"     -> RemoveTail(st.a)
     [] st.k = "Append"     -> MoveTail(st.a, st.b, Parent(st.a), "appendChild")
     [] st.k = "MoveBefore" -> MoveTail(st.a, Parent(st.b), Parent(st.a), "MenuItem.MoveBefore")
-    [] st.k = "GetLayout"  -> GetLayoutTail(st.a)
-    [] st.k = "Group"      -> GroupTail
-    [] st.k = "Prop"       -> PropTail(st.a)
+    [] st.k = "GetLayout"  -> GetLayoutTail(st.a, st.b)
+    [] st.k = "Group"      -> GroupTail(st.b)
+    [] st.k = "Prop"       -> PropTail(st.a, st.b)
+    [] st.k = "Resend"     -> ResendTail
     [] st.k = "Event"      -> EventTail(st.a)
 
 -----------------------------------------------------------------------------
@@ -431,9 +458,9 @@ AppMovesBefore == \E p \in AppProcs, c, s \in Known : c # s /\ StartApp(p, MoveH
 AppReads == \E p \in AppProcs, x \in Known : StartApp(p, Getter(x))
 AppSetsMenuHandler == \E p \in AppProcs : StartApp(p, MenuHandler)
 
-HostGetsLayout == \E p \in CallProcs, x \in {Root} \cup Known : StartCall(p, GetLayoutHead(x))
-HostGetsGroup == \E p \in CallProcs : StartCall(p, GroupHead)
-HostGetsProperty == \E p \in CallProcs, x \in Known : StartCall(p, PropHead(x))
+HostGetsLayout == \E p \in CallProcs, x \in {Root} \cup Known, r \in {0, 1} : StartCall(p, GetLayoutHead(x, r))
+HostGetsGroup == \E p \in CallProcs, r \in {0, 1} : StartCall(p, GroupHead(r))
+HostGetsProperty == \E p \in CallProcs, x \in Known, r \in {0, 1} : StartCall(p, PropHead(x, r))
 HostSendsEvent == \E p \in CallProcs, x \in Known : StartCall(p, EventHead(x))
 HostShows == \E p \in CallProcs : StartCall(p, ShowProg \o Reply)
 HostShowsGroup == \E p \in CallProcs : StartCall(p, ShowGroupProg \o Reply)

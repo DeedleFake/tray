@@ -1,6 +1,6 @@
 ---
 name: verify-menu-locks
-description: Model-check that deedles.dev/tray's Menu.m and MenuItem.m locks can never deadlock, using a TLA+ model of Go's sync.RWMutex with app goroutines calling the Menu and MenuItem API while godbus serves GetLayout, GetGroupProperties, GetProperty, Event, AboutToShow, and AboutToShowGroup on goroutines of their own. Code shapes are read from every lock site in the package, and any lock site the model does not know stops the run. Use when a change adds, removes, moves, or reorders a Lock, RLock, Unlock, RUnlock, or lock() call, calls a locking method from code that holds a lock, changes when a MenuEventHandler or prop callback runs, or bumps godbus, or when running /verify-menu-locks.
+description: Model-check that deedles.dev/tray's Menu.m and MenuItem.m locks can never deadlock, using a TLA+ model of Go's sync.RWMutex with app goroutines calling the Menu and MenuItem API while godbus serves GetLayout, GetGroupProperties, GetProperty, Event, AboutToShow, and AboutToShowGroup on goroutines of their own. Code shapes are read from every lock site in the package, and any lock site the model does not know stops the run. Use when a change adds, removes, moves, or reorders a Lock, RLock, Unlock, RUnlock, or lock() call, calls a locking method from code that holds a lock, changes when a MenuEventHandler or prop callback runs, touches pendingReplies or replyWritten in replies.go or serialGenerator in tray.go, or bumps godbus, or when running /verify-menu-locks.
 ---
 
 # Verify menu locks
@@ -17,7 +17,7 @@ From the repo root:
 .cursor/skills/verify-menu-locks/scripts/check-menu-locks
 ```
 
-It needs Java 11 or newer, `perl`, and `curl`. Without a system Java, `mise exec java@temurin-21 -- <command>` works. The first run downloads `tla2tools.jar` 1.8.0 to `~/.cache/deedles-tray/` and checks its sha256. `verify-menu-sync` uses the same copy. Set `TLA2TOOLS_JAR` to use another copy. A run takes about 6 seconds. `TLC_WORKERS=2` limits the cores it uses. CI runs it in the `formal verification` job of `.github/workflows/test.yml`.
+It needs Java 11 or newer, `perl`, and `curl`. Without a system Java, `mise exec java@temurin-21 -- <command>` works. The first run downloads `tla2tools.jar` 1.8.0 to `~/.cache/deedles-tray/` and checks its sha256. `verify-menu-sync` uses the same copy. Set `TLA2TOOLS_JAR` to use another copy. A run takes about 10 seconds. `TLC_WORKERS=2` limits the cores it uses. CI runs it in the `formal verification` job of `.github/workflows/test.yml`.
 
 To check one property alone:
 
@@ -49,7 +49,7 @@ The script sets the bounds. Raise one with an environment variable when a change
 - `MAX_OPS=2`: at most 2 app calls in total.
 - `MAX_CALLS=2`: at most 2 host method calls in total.
 - `APP_GOROUTINES=2`: app calls come from up to 2 goroutines at once.
-- `CALL_GOROUTINES=1`: one host call runs at a time. An `Event` handler still runs app code on that goroutine, so app code and host calls overlap. Deeper runs also pass. `CALL_GOROUTINES=2`, with two host calls at once, takes about 1 minute. `MAX_OPS=3` takes about 50 seconds. `CALL_GOROUTINES=2 MAX_CALLS=3` takes about 1.5 minutes.
+- `CALL_GOROUTINES=1`: one host call runs at a time. An `Event` handler still runs app code on that goroutine, so app code and host calls overlap. Deeper runs also pass. `CALL_GOROUTINES=2`, with two host calls at once, takes about 2 minutes. `MAX_OPS=3` takes about 50 seconds. `CALL_GOROUTINES=2 MAX_CALLS=3` takes about 1.5 minutes.
 
 App calls take any item the app has, including removed ones, as the API allows. Host calls cover these methods:
 
@@ -69,6 +69,8 @@ The script stops with `MODEL STALE` when the code no longer matches the model:
 These are assumptions the script cannot read from the code:
 
 - godbus runs each method call on its own goroutine (`go conn.handleCall(msg)` in godbus `conn.go`), and its reading goroutine takes no menu lock.
+- godbus calls `RetireSerial` right after it writes any message that is not a method call (`sendMessageAndIfClosed` in godbus `conn.go`). The item's `serialGenerator.RetireSerial` calls `Item.replyWritten`, which locks the menu only for a `GetLayout`, `GetGroupProperties`, or `GetProperty` reply that a property change overlapped. That reply runs on the call's own goroutine after the method returned. For a signal, or a reply that nothing overlapped, `pendingReplies.written` finds nothing and `replyWritten` returns before any menu lock. The lock-site list does not show this edge, because `RetireSerial` calls a function value.
+- `pendingReplies.m` in `replies.go` is not in the model. Each `pendingReplies` method locks it, reads or writes its maps, and unlocks it, with no other step in between, as `model/lock-sites.txt` records. So a goroutine that holds it waits on nothing.
 - `conn.Emit` and godbus writing a reply take `outputHandler.closed.lck` for reading and then `outputHandler.sendLck`, and nothing else, and they release both after the write (godbus `sendAndIfClosed`). Only `Conn.Close` writes `closed.lck`, and the menu never calls it under a lock. So these are not steps in the model. A write that never finishes, for example because the bus stops reading, would hold whatever menu locks the caller holds. The model assumes every write finishes.
 - Changes to the menu tree happen under `Menu.m`, and so do all reads of it. So the model makes a function's tree reads and writes at the step that takes `Menu.m`.
 - The modeled `MenuEventHandler` calls `SetProps` on its own item. A handler that calls something else runs the same way, with nothing held.
@@ -120,6 +122,7 @@ Each step in the model carries an `at` string naming the statement it comes from
 | `GetLayoutHead`, `GetLayoutTail`, `Walk` | `dbusmenu.GetLayout` under `menu.m.Lock()`, then `buildLayout` read-locking each item while `buildChildren` walks under it |
 | `GroupHead`, `GroupTail` | `dbusmenu.GetGroupProperties`: `menu.m.RLock()`, then each item's `RLock` and `RUnlock` in turn |
 | `PropHead`, `PropTail` | `dbusmenu.GetProperty`: `menu.m.RLock()`, then the item's |
+| `PropsReply`, `ResendTail` | `Item.replyWritten` after a `GetLayout`, `GetGroupProperties`, or `GetProperty` reply: `menu.m.RLock()`, then each changed item's `RLock` and `RUnlock` around `sendPropertiesUpdated`. A host call either resends or returns before any lock. |
 | `EventHead`, `EventTail` | `dbusmenu.event` and `getHandler`, then the handler |
 | `ShowProg`, `ShowGroupProg` | `dbusmenu.AboutToShow` and `AboutToShowGroup` |
 | `Step` | `sync.RWMutex` `Lock`, `RLock`, `Unlock`, and `RUnlock` in Go's `src/sync/rwmutex.go` |
@@ -130,14 +133,16 @@ None. The current code passes every property within the bounds above.
 
 ## Keep it in step with the code
 
-Sync commit: `d5e8c87` (the model was last confirmed to describe the covered code at this commit)
+Sync commit: `eccc911` (the model was last confirmed to describe the covered code at this commit)
 
 Covered code:
 
 - `menu.go`: `Menu.lock`, `Menu.updateLayout`, `ItemMenuHandler`
-- `menuitem.go`: `Menu.AddChild`, `MenuItem.AddChild`, `MenuItem.Remove`, `appendChild`, `MenuItem.MoveBefore`, `MenuItem.SetProps`, `MenuItem.lock`, `MenuItem.getParent`, the `MenuItem` getters
+- `menuitem.go`: `Menu.AddChild`, `MenuItem.AddChild`, `MenuItem.Remove`, `appendChild`, `MenuItem.MoveBefore`, `MenuItem.SetProps`, `MenuItem.emitPropertiesUpdated`, `MenuItem.sendPropertiesUpdated`, `MenuItem.lock`, `MenuItem.getParent`, the `MenuItem` getters
 - `dbusmenu.go`: `GetLayout`, `buildLayout`, `buildChildren`, `GetGroupProperties`, `GetProperty`, `getHandler`, `event`, `Event`, `EventGroup`, `AboutToShow`, `AboutToShowGroup`
 - `item.go`: `Item.SetProps`, for when prop callbacks run
+- `replies.go`: `pendingReplies`, `Item.replyWritten`
+- `tray.go`: `Item.connOptions`, `serialGenerator.RetireSerial`
 - `go.mod`: the `github.com/godbus/dbus/v5` version
 
 The script prints the covered files that changed since the sync commit. The lock-site check catches lock changes on its own, but a change to the tree logic (`getParent`, `setChildren`, `Menu.nodes`) can change which locks a function takes without changing its lock sites. After you confirm that the model still describes the code at a newer commit, move the sync commit forward to it. Never move it without that check.
