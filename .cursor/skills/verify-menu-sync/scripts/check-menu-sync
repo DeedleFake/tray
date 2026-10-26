@@ -16,7 +16,7 @@ MAX_LABEL=${MAX_LABEL:-2}
 # Properties the current code is known to break, as PROPERTY:BOUND. The
 # property must hold with the BOUND constant FALSE and is expected to fail
 # with it TRUE. Remove an entry once the code is fixed and the check passes it.
-KNOWN_FINDINGS=(PropsConverge:LateReply)
+KNOWN_FINDINGS=()
 
 PROPERTIES=(LayoutConverges PropsConverge RevisionsIncrease LabelChangeKeepsMenuOpen)
 
@@ -73,6 +73,13 @@ flag AppendSignalsLayout "$(anchor menuitem.go 'func appendChild\('"$BODY$TOP"'u
 flag MoveBeforeSignalsLayout "$(anchor menuitem.go 'func \(item \*MenuItem\) MoveBefore\('"$BODY$TOP"'updateLayout\(')"
 flag SetPropsSignalsProps "$(anchor menuitem.go 'func \(item \*MenuItem\) SetProps\('"$BODY$TOP"'emitPropertiesUpdated\(')"
 flag SetPropsSignalsLayout "$(anchor menuitem.go 'func \(item \*MenuItem\) SetProps\('"$BODY"'updateLayout\(')"
+flag ResendAfterReply "$(all \
+  "$(anchor item.go 'func New\('"$BODY"'dbus\.ConnectSessionBus\(item\.connOptions\(\)\.\.\.\)')" \
+  "$(anchor tray.go 'func \(item \*Item\) connOptions\('"$BODY"'case "atomic", "":'"$BODY"'dbus\.WithSerialGenerator\(&serialGenerator\{retired: item\.replyWritten\}\),\s*dbus\.WithIncomingInterceptor\(item\.replies\.received\),\s*dbus\.WithOutgoingInterceptor\(item\.replies\.sending\),')" \
+  "$(anchor tray.go 'func \(g \*serialGenerator\) RetireSerial\(serial uint32\) \{\n\tg\.retired\(serial\)\n\}')" \
+  "$(anchor menuitem.go 'func \(item \*MenuItem\) emitPropertiesUpdated\('"$BODY$TOP"'replies\.changed\(item\.id\)')" \
+  "$(anchor replies.go 'func \(p \*pendingReplies\) received\('"$BODY"'case "GetLayout", "GetGroupProperties"')" \
+  "$(anchor replies.go 'func \(item \*Item\) replyWritten\(serial uint32\) \{'"$BODY"'item\.replies\.written\(serial\)'"$BODY"'sendPropertiesUpdated\(')")"
 
 # Assumptions the model's steps rest on. Each must hold, or the model no
 # longer describes the code.
@@ -83,6 +90,7 @@ for fn in 'func \(menu \*Menu\) AddChild\(' 'func \(item \*MenuItem\) AddChild\(
 done
 assume "GetLayout holds menu.m while it builds the layout" "$(anchor dbusmenu.go 'func \(menu \*dbusmenu\) GetLayout\('"$BODY"'menu\.m\.Lock\(\)\n\tdefer menu\.m\.Unlock\(\)'"$BODY"'layout = menu\.buildLayout\(parent, recursionDepth, propertyNames\)')"
 assume "buildLayout copies every property into the reply" "$(anchor dbusmenu.go 'func \(menu \*dbusmenu\) buildLayout\('"$BODY"'Properties: mapSlice\(item\.props, nil\)')"
+assume "replyWritten holds menu.m while it reads and resends" "$(anchor replies.go 'func \(item \*Item\) replyWritten\('"$BODY"'menu\.m\.RLock\(\)\n\tdefer menu\.m\.RUnlock\(\)'"$BODY"'sendPropertiesUpdated\(')"
 assume "updateLayout emits LayoutUpdated for each node it is given" "$(anchor menu.go 'for _, node := range nodes \{\s*id := node\.getID\(\)\s*err := menu\.item\.conn\.Emit\(menuPath, "com\.canonical\.dbusmenu\.LayoutUpdated"')"
 
 echo "code facts (model constants):"

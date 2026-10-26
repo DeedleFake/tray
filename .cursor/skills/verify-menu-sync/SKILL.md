@@ -1,6 +1,6 @@
 ---
 name: verify-menu-sync
-description: Model-check that a desktop tray host's copy of a deedles.dev/tray menu ends up matching the app's Menu after any mix of AddChild, Remove, AppendChild, MoveBefore, and SetProps calls racing with the host's GetLayout and GetGroupProperties calls, using a TLA+ model whose code facts are read from menu.go, menuitem.go, and dbusmenu.go. Use when a change touches updateLayout, emitPropertiesUpdated, setChildren, Menu or MenuItem methods that change the menu, GetLayout, buildLayout, GetGroupProperties, Menu.m locking, or the godbus version, or when running /verify-menu-sync.
+description: Model-check that a desktop tray host's copy of a deedles.dev/tray menu ends up matching the app's Menu after any mix of AddChild, Remove, AppendChild, MoveBefore, and SetProps calls racing with the host's GetLayout and GetGroupProperties calls, using a TLA+ model whose code facts are read from menu.go, menuitem.go, dbusmenu.go, replies.go, tray.go, and item.go. Use when a change touches updateLayout, emitPropertiesUpdated, pendingReplies or replyWritten in replies.go, connOptions or serialGenerator in tray.go, setChildren, Menu or MenuItem methods that change the menu, GetLayout, buildLayout, GetGroupProperties, Menu.m locking, or the godbus version, or when running /verify-menu-sync.
 ---
 
 # Verify menu sync
@@ -17,7 +17,7 @@ From the repo root:
 .cursor/skills/verify-menu-sync/scripts/check-menu-sync
 ```
 
-It needs Java 11 or newer, `perl`, and `curl`. Without a system Java, `mise exec java@temurin-21 -- <command>` works. The first run downloads `tla2tools.jar` 1.8.0 to `~/.cache/deedles-tray/` and checks its sha256. Set `TLA2TOOLS_JAR` to use another copy. A run takes about 5 seconds. `TLC_WORKERS=2` limits the cores it uses.
+It needs Java 11 or newer, `perl`, and `curl`. Without a system Java, `mise exec java@temurin-21 -- <command>` works. The first run downloads `tla2tools.jar` 1.8.0 to `~/.cache/deedles-tray/` and checks its sha256. Set `TLA2TOOLS_JAR` to use another copy. A run takes about 15 seconds. `TLC_WORKERS=2` limits the cores it uses.
 
 To check one property alone, ignoring the known findings list:
 
@@ -56,7 +56,9 @@ The model assumes these, and the script stops with `MODEL STALE` when the code n
 
 These are assumptions the script cannot read from the code:
 
-- godbus serves each call on its own goroutine and writes the reply after the method returns (`handleCall` in godbus `export.go`). The `LateReply` constant is this, and it is TRUE in every run except the one that checks the known finding without it.
+- godbus serves each call on its own goroutine and writes the reply after the method returns (`handleCall` in godbus `export.go`). The `LateReply` constant is this. It is TRUE in every run except the one that checks a known finding without it.
+- godbus runs the incoming interceptor before it starts the method (`inWorker` in godbus `conn.go`), runs the outgoing interceptor after it gives a message its serial and before it writes it, and calls `RetireSerial` right after it writes a message that is not a method call (`sendMessageAndIfClosed` in `conn.go`). `pendingReplies` depends on all three.
+- The model starts recording changes for a reply when the method builds it. The code starts earlier, when the call arrives, so it can resend items the model does not. A resend sends current values under `Menu.m`, and any later change sends its own signal after it, so those extra resends change nothing the host ends up showing.
 - All messages from the item reach the host in the order the item sent them, as D-Bus guarantees for one connection.
 - The host behaves like the GNOME extension with its menu open. It answers `LayoutUpdated` by cancelling its last layout update, including the `GetGroupProperties` call it started, and calling `GetLayout(0, -1)`. It applies `ItemsPropertiesUpdated` only to items it already has. It replaces its copy with each `GetLayout` reply, properties included, and calls `GetGroupProperties` for the items that are new to it. With the menu closed, GNOME defers signals until the menu opens and then refetches everything, which the model does not cover.
 - Every item gets a label when it is created. Other properties change the same way a label does.
@@ -65,8 +67,8 @@ These are assumptions the script cannot read from the code:
 
 - `PASS` lists every property that held in every reachable state.
 - `FAIL <property>` means a new break. Open the `.out` file it names. Its `State N:` lines are the steps, and the variables under each step show what changed.
-- `KNOWN FINDING still present` is expected for the finding below. The check exits 0 when only that fails.
-- `FIXED? <property> now passes` means the model no longer finds that break. Confirm the fix in the code with a test, since a code fact can flip without the bug being gone, then remove the entry from `KNOWN_FINDINGS` in the script and from Findings below. The check exits 1 until you do. Sending `LayoutUpdated` from `SetProps` also makes the finding pass, because the host then refetches on every label change. That trade is the `LabelChangeKeepsMenuOpen` failure printed next to it.
+- `KNOWN FINDING still present` is expected for an entry in `KNOWN_FINDINGS` in the script. The check exits 0 when only those fail. The list is empty now.
+- `FIXED? <property> now passes` means the model no longer finds a known break. Confirm the fix in the code with a test, since a code fact can flip without the bug being gone, then remove the entry from `KNOWN_FINDINGS` and from Findings below. The check exits 1 until you do. Sending `LayoutUpdated` from `SetProps` makes a stale-label finding pass too, because the host then refetches on every label change. That trade is the `LabelChangeKeepsMenuOpen` failure printed next to it.
 - `MODEL STALE` means one of the assumptions above no longer matches the code. See the next section.
 - `TOOL ERROR` means TLC did not finish. Read the `.out` file. It is usually a model syntax or type error.
 
@@ -85,6 +87,7 @@ The script prints `code facts` first. Each is a model constant read from the cod
 | `MoveBeforeSignalsLayout` | an unconditional call to `updateLayout` in `MenuItem.MoveBefore` | `LayoutConverges` |
 | `SetPropsSignalsProps` | an unconditional call to `emitPropertiesUpdated` in `MenuItem.SetProps` | `PropsConverge`, in the run with `LateReply` FALSE |
 | `SetPropsSignalsLayout` | any call to `updateLayout` in `MenuItem.SetProps`. FALSE is correct. | `LabelChangeKeepsMenuOpen` when TRUE |
+| `ResendAfterReply` | all of these: `New` connects with `item.connOptions()`; the `atomic` case of `connOptions` installs `serialGenerator{retired: item.replyWritten}` and `pendingReplies`' `received` and `sending` interceptors; `RetireSerial` calls `g.retired`; `emitPropertiesUpdated` calls `replies.changed(item.id)` unconditionally; `received` tracks `GetLayout` and `GetGroupProperties`; `replyWritten` sends what `written` returns | `PropsConverge` |
 
 An unconditional call is a statement at the top level of the method body, one tab deep. A call moved under an `if` turns the fact FALSE, and the model then treats the method as never sending the signal. When a condition is intended, model it as its own action instead of trusting the FALSE. The modeled host refetches the whole layout on any `LayoutUpdated`, so the facts only ask whether a method sends one, not which parent it names.
 
@@ -109,33 +112,31 @@ A new method that changes the menu has no fact and no action. Model it before tr
 | `MoveBefore` | `MenuItem.MoveBefore` |
 | `Serve` of a layout call | `dbusmenu.GetLayout` under `Menu.m`, through `buildLayout` and `buildChildren` |
 | `Serve` of a props call | `dbusmenu.GetGroupProperties` under `Menu.m` |
-| `Reply` | godbus `handleCall` writing the reply after the method returns |
+| app action's tracking (`AppCall`) | `emitPropertiesUpdated` calling `pendingReplies.changed` for its item, which every unwritten reply records |
+| `Reply` | godbus `handleCall` writing the reply after the method returns, then `serialGenerator.RetireSerial` handing the reply's changed items to `replyWritten` |
+| `Resend` | `Item.replyWritten`: under `Menu.m`, one `ItemsPropertiesUpdated` with every current property of each changed item still in `Menu.nodes`, through `sendPropertiesUpdated` |
 | `Host` | `_onSignal`, `_onPropertiesUpdated`, `_layoutUpdateUpdateAsync`, `_doLayoutUpdate`, and `_requestProperties` in the GNOME extension's `dbusMenu.js` |
 
 The model leaves out a move that puts an item under itself or its own child. The library does not check for one, and the cycle makes `buildLayout` recurse until the stack overflows.
 
 ## Findings
 
-`PropsConverge` fails on the current code. The shortest path, in the code's words:
+None open.
 
-1. The app calls `menu.AddChild(tray.MenuItemLabel("Ticks: 1"))`. The item sends `LayoutUpdated`.
-2. GNOME calls `GetLayout(0, -1)`, adds the new item from the reply, and calls `GetGroupProperties` for it.
-3. `GetGroupProperties` reads `Ticks: 1` under `Menu.m` and returns. godbus has not written the reply yet.
-4. The app calls `SetProps(tray.MenuItemLabel("Ticks: 2"))`. The item sends `ItemsPropertiesUpdated` with `Ticks: 2`.
-5. godbus writes the `GetGroupProperties` reply with `Ticks: 1`.
-6. GNOME applies `Ticks: 2`, then the reply's `Ticks: 1`. The open menu shows `Ticks: 1` until the label changes again.
-
-A `GetLayout` reply can overtake a signal the same way and put back an old label on an item GNOME already shows. A run with `LateReply` FALSE passes, so the window between the method returning and godbus writing the reply is the whole cause.
+`PropsConverge` used to fail. godbus writes a `GetGroupProperties` or `GetLayout` reply after the method unlocks `Menu.m`, so a `SetProps` in that window sent its `ItemsPropertiesUpdated` ahead of a reply that still held the old label, and GNOME showed the old label until the next change. `pendingReplies` in `replies.go` now records the items that change while such a reply is unwritten, and `replyWritten` sends their properties again right after godbus writes the reply. `SetProps` still sends no `LayoutUpdated`. `TestSetPropsBeforeUnwrittenReply` reproduces the old order on a private bus. With `ResendAfterReply` FALSE the check fails `PropsConverge` again.
 
 ## Keep it in step with the code
 
-Sync commit: `d5e8c87` (the model was last confirmed to describe the covered code at this commit)
+Sync commit: `eccc911` (the model was last confirmed to describe the covered code at this commit)
 
 Covered code:
 
 - `menu.go`: `Menu.updateLayout`, `Menu.revision`, `Menu.lock`, `Menu.setChildren`
-- `menuitem.go`: `Menu.AddChild`, `MenuItem.AddChild`, `MenuItem.Remove`, `appendChild`, `MenuItem.MoveBefore`, `MenuItem.SetProps`, `MenuItem.emitPropertiesUpdated`, `MenuItem.setChildren`, `MenuItem.getParent`
+- `menuitem.go`: `Menu.AddChild`, `MenuItem.AddChild`, `MenuItem.Remove`, `appendChild`, `MenuItem.MoveBefore`, `MenuItem.SetProps`, `MenuItem.emitPropertiesUpdated`, `MenuItem.sendPropertiesUpdated`, `MenuItem.setChildren`, `MenuItem.getParent`
+- `replies.go`: `pendingReplies`, `Item.replyWritten`
+- `tray.go`: `Item.connOptions`, `serialGenerator.RetireSerial`
+- `item.go`: `New`
 - `dbusmenu.go`: `GetLayout`, `buildLayout`, `buildChildren`, `GetGroupProperties`
-- `go.mod`: the `github.com/godbus/dbus/v5` version, for `handleCall`
+- `go.mod`: the `github.com/godbus/dbus/v5` version, for `handleCall`, `inWorker`, and `sendMessageAndIfClosed`
 
 The script prints the covered files that changed since the sync commit. After you confirm that the model still describes the code at a newer commit, move the sync commit forward to it. Never move it without that check.

@@ -10,6 +10,11 @@
 (* knows. A GetLayout reply replaces its whole copy, properties included,  *)
 (* and asks GetGroupProperties for the items that are new to it.           *)
 (*                                                                         *)
+(* godbus writes a reply after the method unlocks Menu.m, so a property    *)
+(* change can send its signal ahead of a reply that holds the old value.   *)
+(* The item tracks those replies (pendingReplies in replies.go) and sends  *)
+(* the changed items' properties again once godbus has written the reply. *)
+(*                                                                         *)
 (* File references are to the repo root. "godbus" is                      *)
 (* github.com/godbus/dbus/v5 at the version in go.mod.                     *)
 (***************************************************************************)
@@ -29,7 +34,8 @@ CONSTANTS
   AppendSignalsLayout,     \* appendChild calls updateLayout
   MoveBeforeSignalsLayout, \* MoveBefore calls updateLayout
   SetPropsSignalsProps,    \* MenuItem.SetProps calls emitPropertiesUpdated
-  SetPropsSignalsLayout    \* MenuItem.SetProps calls updateLayout
+  SetPropsSignalsLayout,   \* MenuItem.SetProps calls updateLayout
+  ResendAfterReply         \* pendingReplies is wired in and resends after a reply
 
 Root == 0
 Ids == 1..MaxItems
@@ -45,14 +51,16 @@ VARIABLES
   ops,      \* app calls made so far
   out,      \* messages on the item's connection to the host, in order
   calls,    \* calls the host sent that the item has not served
-  served,   \* replies built under Menu.m but not yet written
+  served,   \* replies built under Menu.m but not yet written, with the
+            \* items whose properties changed since the reply was built
+  resend,   \* sets of items replyWritten has yet to send again
   hv,       \* the host's copy of the menu
   want,     \* the host's latest layout update; older ones are cancelled
   revLog,   \* revision of each layout change, starting with the initial one
   menuShut  \* a label change sent LayoutUpdated, which closes an open GNOME menu
 
 vars == <<nodes, kids, par, label, rev, lastId, ops, out, calls, served,
-          hv, want, revLog, menuShut>>
+          resend, hv, want, revLog, menuShut>>
 
 Range(s) == {s[i] : i \in DOMAIN s}
 
@@ -113,6 +121,7 @@ Init ==
   /\ out = <<>>
   /\ calls = {}
   /\ served = {}
+  /\ resend = {}
   /\ hv = View(kids, label)
   /\ want = 0
   /\ revLog = <<0>>
@@ -184,16 +193,27 @@ AppendChild(c, dst) == /\ dst = Root \/ dst \in nodes
 MoveBefore(c, sib) == /\ sib \in nodes /\ sib # c /\ HasParent(sib)
                       /\ Move(c, par[sib], sib, MoveBeforeSignalsLayout)
 
-\* One app call. Each is its own definition so TLC names the step.
+\* emitPropertiesUpdated calls pendingReplies.changed for its item, so
+\* every unwritten reply records the items the method sent
+\* ItemsPropertiesUpdated for. The code starts recording when the call
+\* arrives, before the method reads the menu. A change before the read
+\* is in the reply anyway, so the model starts at Serve.
+Changed == {out'[i].id : i \in {j \in (Len(out) + 1)..Len(out') :
+                                  out'[j].t = "props"}}
+Track(rs) == {[r EXCEPT !.chg = @ \cup Changed] : r \in rs}
+
+\* One app call. Each is its own definition so TLC names the step. It
+\* comes after the method so that out' is known.
 AppCall == /\ ops < MaxOps
            /\ ops' = ops + 1
-           /\ UNCHANGED <<calls, served, hv, want>>
+           /\ served' = Track(served)
+           /\ UNCHANGED <<calls, resend, hv, want>>
 
-AppAddsItem == AppCall /\ \E p \in {Root} \cup nodes : AddChild(p)
-AppSetsLabel == AppCall /\ \E n \in nodes : SetLabel(n)
-AppRemovesItem == AppCall /\ \E n \in nodes : RemoveItem(n)
-AppAppendsChild == AppCall /\ \E c \in nodes, d \in {Root} \cup nodes : AppendChild(c, d)
-AppMovesBefore == AppCall /\ \E c, s \in nodes : MoveBefore(c, s)
+AppAddsItem == (\E p \in {Root} \cup nodes : AddChild(p)) /\ AppCall
+AppSetsLabel == (\E n \in nodes : SetLabel(n)) /\ AppCall
+AppRemovesItem == (\E n \in nodes : RemoveItem(n)) /\ AppCall
+AppAppendsChild == (\E c \in nodes, d \in {Root} \cup nodes : AppendChild(c, d)) /\ AppCall
+AppMovesBefore == (\E c, s \in nodes : MoveBefore(c, s)) /\ AppCall
 
 -----------------------------------------------------------------------------
 (* The item's side of GetLayout and GetGroupProperties, dbusmenu.go and    *)
@@ -212,18 +232,34 @@ ReplyTo(c) ==
 Serve(c) ==
   /\ calls' = calls \ {c}
   /\ IF LateReply
-     THEN /\ served' = served \cup {ReplyTo(c)}
+     THEN /\ served' = served \cup {[msg |-> ReplyTo(c), chg |-> {}]}
           /\ UNCHANGED out
      ELSE /\ out' = Append(out, ReplyTo(c))
           /\ UNCHANGED served
-  /\ UNCHANGED <<nodes, kids, par, label, rev, lastId, ops, hv, want,
+  /\ UNCHANGED <<nodes, kids, par, label, rev, lastId, ops, resend, hv, want,
                  revLog, menuShut>>
 
+\* godbus writes the reply, then calls serialGenerator.RetireSerial with
+\* its serial, which hands the items that changed to replyWritten.
 Reply(r) ==
   /\ served' = served \ {r}
-  /\ out' = Append(out, r)
+  /\ out' = Append(out, r.msg)
+  /\ resend' = IF ResendAfterReply /\ r.chg # {} THEN resend \cup {r.chg}
+               ELSE resend
   /\ UNCHANGED <<nodes, kids, par, label, rev, lastId, ops, calls, hv, want,
                  revLog, menuShut>>
+
+\* replyWritten: under Menu.m, one ItemsPropertiesUpdated with every
+\* current property of each item still in Menu.nodes. It sends them with
+\* sendPropertiesUpdated, which does not call pendingReplies.changed.
+Resend(ids) ==
+  LET live == ids \cap nodes IN
+  /\ resend' = resend \ {ids}
+  /\ out' = IF live = {} THEN out
+            ELSE Append(out, [t |-> "resend",
+                              vals |-> [n \in live |-> [l |-> label[n], c |-> CD(kids, n)]]])
+  /\ UNCHANGED <<nodes, kids, par, label, rev, lastId, ops, calls, served,
+                 hv, want, revLog, menuShut>>
 
 -----------------------------------------------------------------------------
 (* The host: DBusClient._onSignal, _onPropertiesUpdated,                   *)
@@ -258,11 +294,18 @@ Host ==
                              ELSE hv[n]]
                      ELSE hv
             /\ UNCHANGED <<want, calls>>
-  /\ UNCHANGED <<nodes, kids, par, label, rev, lastId, ops, served, revLog,
-                 menuShut>>
+       [] m.t = "resend" ->
+            /\ hv' = [n \in DOMAIN hv |->
+                       IF n \in DOMAIN m.vals
+                       THEN [hv[n] EXCEPT !.l = m.vals[n].l, !.c = m.vals[n].c]
+                       ELSE hv[n]]
+            /\ UNCHANGED <<want, calls>>
+  /\ UNCHANGED <<nodes, kids, par, label, rev, lastId, ops, served, resend,
+                 revLog, menuShut>>
 
 ItemServes == \E c \in calls : Serve(c)
 ReplyWritten == \E r \in served : Reply(r)
+ItemResends == \E ids \in resend : Resend(ids)
 
 Next ==
   \/ AppAddsItem
@@ -272,6 +315,7 @@ Next ==
   \/ AppMovesBefore
   \/ ItemServes
   \/ ReplyWritten
+  \/ ItemResends
   \/ Host
 
 Spec == Init /\ [][Next]_vars
@@ -286,7 +330,7 @@ TypeOK ==
   /\ menuShut \in BOOLEAN
 
 \* Nothing is on its way between the item and the host.
-Settled == out = <<>> /\ calls = {} /\ served = {}
+Settled == out = <<>> /\ calls = {} /\ served = {} /\ resend = {}
 
 Shown == View(kids, label)
 
