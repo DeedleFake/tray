@@ -1,0 +1,57 @@
+#!/usr/bin/env perl
+# Prints a TLC counterexample from check-menu-locks (out/<run>.trace.json)
+# as one line per goroutine step, in the code's words.
+use strict;
+use warnings;
+use JSON::PP;
+
+my $file = shift or die "usage: explain-trace out/<run>.trace.json\n";
+open my $fh, '<', $file or die "$file: $!";
+my $j = decode_json(do { local $/; <$fh> });
+my $ce = $j->{counterexample} or die "$file has no counterexample\n";
+
+sub mx { my $m = shift; $m == 0 ? 'Menu.m' : "item ${m}'s MenuItem.m" }
+sub inset { my ($x, $s) = @_; scalar grep { $_ eq $x } @$s }
+
+my $canon = JSON::PP->new->canonical;
+my @steps = @{$ce->{action}};
+my $last;
+for my $t (@steps) {
+  my ($from, undef, $to) = @$t;
+  my ($a, $b) = ($from->[1], $to->[1]);
+  $last = $b;
+  for my $p (sort keys %{$a->{prog}}) {
+    my ($pa, $pb) = ($a->{prog}{$p}, $b->{prog}{$p});
+    my $same = $canon->encode($pa) eq $canon->encode($pb);
+    if (!@$pa && @$pb) {
+      print "$p: starts a call, first step   ($pb->[0]{at})\n";
+      next;
+    }
+    next unless @$pa;
+    my $s = $pa->[0];
+    my $m = $s->{m};
+    if ($s->{op} eq 'Lock') {
+      next if $same && ($a->{wr}{$m} // '') eq ($b->{wr}{$m} // '');
+      if ($b->{wheld}{$m} && $b->{wr}{$m} eq $p && !$same) { print "$p: locks ", mx($m), "   ($s->{at})\n" }
+      elsif ($b->{wr}{$m} eq $p) { print "$p: takes ", mx($m), "'s writer slot, so new readers block, and waits for its readers   ($s->{at})\n" }
+    } elsif ($s->{op} eq 'RLock') {
+      if (inset($p, $b->{rwait}{$m}) && !inset($p, $a->{rwait}{$m})) { print "$p: blocks read-locking ", mx($m), " behind the waiting writer $b->{wr}{$m}   ($s->{at})\n" }
+      elsif (!$same && !inset($p, $a->{rwait}{$m})) { print "$p: read-locks ", mx($m), "   ($s->{at})\n" }
+      elsif (!$same) { print "$p: gets its read lock of ", mx($m), " as the writer unlocks\n" }
+    } elsif (!$same && $s->{op} eq 'Unlock') { print "$p: unlocks ", mx($m), "   ($s->{at})\n" }
+    elsif (!$same && $s->{op} eq 'RUnlock') { print "$p: read-unlocks ", mx($m), "   ($s->{at})\n" }
+    elsif (!$same && $s->{op} eq 'handler') { print "$p: calls the item's MenuEventHandler, which calls SetProps on item $s->{a}   ($s->{at})\n" }
+  }
+}
+
+print "\nthen:\n";
+for my $p (sort keys %{$last->{prog}}) {
+  my $pr = $last->{prog}{$p};
+  my @held = map { mx($_) . ($last->{wheld}{$_} && $last->{wr}{$_} eq $p ? ' (write)' : ' (writer slot)') }
+             grep { $last->{wr}{$_} eq $p } sort keys %{$last->{wr}};
+  push @held, map { mx($_) . ' (read)' } grep { $last->{rd}{$_}{$p} } sort keys %{$last->{rd}};
+  my $h = @held ? 'holds ' . join(', ', @held) : 'holds nothing';
+  if (!@$pr) { print "  $p: idle, $h\n"; next }
+  my $s = $pr->[0];
+  print "  $p: $h; next $s->{op} ", ($s->{op} =~ /Lock/ ? mx($s->{m}) . ' ' : ''), "  ($s->{at})\n";
+}
