@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+# Model-checks .cursor/skills/verify-menu-locks/model/MenuLocks.tla with TLC.
+# The model's code-shape constants come from scripts/lock-sites, which
+# lists every lock step in the package. A lock site that matches neither
+# model/lock-sites.txt nor a shape the model knows stops the run with
+# MODEL STALE.
+set -euo pipefail
+
+TLA_VERSION=1.8.0
+TLA_SHA256=fc6878c603f0fdc18b9fe3e5bf51860cb90ab5b1154e3c371660c036d6bdd63e
+GODBUS_VERSION=v5.2.4
+
+# Model bounds. SKILL.md explains what each one covers.
+INIT_ITEMS=${INIT_ITEMS:-2}
+MAX_ITEMS=${MAX_ITEMS:-3}
+MAX_OPS=${MAX_OPS:-2}
+MAX_CALLS=${MAX_CALLS:-2}
+APP_GOROUTINES=${APP_GOROUTINES:-2}
+CALL_GOROUTINES=${CALL_GOROUTINES:-1}
+
+PROPERTIES=(NoDeadlock MenuLockedFirst NoRecursiveRead HandlerRunsUnlocked)
+
+ONLY=
+if [[ ${1:-} == --only ]]; then
+  ONLY=${2:?usage: check-menu-locks [--only PROPERTY]}
+fi
+
+ROOT=$(git rev-parse --show-toplevel)
+SKILL_DIR="$ROOT/.cursor/skills/verify-menu-locks"
+OUT="$SKILL_DIR/out"
+WORKERS=${TLC_WORKERS:-auto}
+
+die() { echo "error: $*" >&2; exit 2; }
+
+command -v java >/dev/null || die "java not found. Install a JDK 11 or newer (for example: mise exec java@temurin-21 -- $0)."
+command -v perl >/dev/null || die "perl not found."
+
+JAR=${TLA2TOOLS_JAR:-"${XDG_CACHE_HOME:-$HOME/.cache}/deedles-tray/tla2tools-$TLA_VERSION.jar"}
+if [[ ! -f "$JAR" ]]; then
+  mkdir -p "$(dirname "$JAR")"
+  echo "downloading tla2tools.jar $TLA_VERSION to $JAR"
+  curl -fsSL -o "$JAR.part" "https://github.com/tlaplus/tlaplus/releases/download/v$TLA_VERSION/tla2tools.jar"
+  mv "$JAR.part" "$JAR"
+fi
+if command -v sha256sum >/dev/null; then
+  sum=$(sha256sum "$JAR" | cut -d' ' -f1)
+else
+  sum=$(shasum -a 256 "$JAR" | cut -d' ' -f1)
+fi
+[[ "$sum" == "$TLA_SHA256" ]] || die "$JAR has sha256 $sum, expected $TLA_SHA256. Delete it and rerun."
+
+rm -rf "$OUT" && mkdir -p "$OUT"
+"$SKILL_DIR/scripts/lock-sites" "$ROOT" >"$OUT/lock-sites.txt"
+
+# Compare the lock sites with the recorded ones. A function may differ only
+# in one of the shapes below, which set a model constant. Prints
+# "shape NAME VALUE" lines, then "stale ..." lines.
+facts=$(perl -e '
+  sub load {
+    my ($f) = @_; my (%s, $k);
+    open my $fh, "<", $f or die "$f: $!";
+    while (<$fh>) { chomp; if (/^\S/) { $k = $_; $s{$k} = [] } else { s/^  //; push @{$s{$k}}, $_ } }
+    return \%s;
+  }
+  my $want = load($ARGV[0]);
+  my $got = load($ARGV[1]);
+  my %shape = (ItemFirst => [], EventHoldsMenuRead => "FALSE", ShowGroupCallsShow => "FALSE");
+  my @stale;
+  my $j = sub { join "\n", @{$_[0]} };
+  for my $k (sort keys %$got) {
+    my ($g, $w) = ($got->{$k}, $want->{$k});
+    if (!$w) { push @stale, "new lock site $k: " . join("; ", @$g); next }
+    next if $j->($g) eq $j->($w);
+    my @sw = @$w; @sw[0, 1] = @sw[1, 0];
+    if ($k eq "menuitem.go MenuItem.SetProps" && $j->($g) eq $j->(\@sw)) { push @{$shape{ItemFirst}}, "\"SetProps\""; next }
+    if ($k eq "menuitem.go MenuItem.AddChild" && $j->($g) eq $j->(\@sw)) { push @{$shape{ItemFirst}}, "\"AddChild\""; next }
+    if ($k eq "dbusmenu.go dbusmenu.event" && $j->($g) eq $j->(["menu.m.RLock", "defer menu.m.RUnlock", @$w])) { $shape{EventHoldsMenuRead} = "TRUE"; next }
+    if ($k eq "dbusmenu.go dbusmenu.AboutToShowGroup" && @$g == @$w + 1 && $j->([@$g[0 .. $#$w]]) eq $j->($w) && $g->[-1] =~ /call AboutToShow$/) { $shape{ShowGroupCallsShow} = "TRUE"; next }
+    push @stale, "$k changed:", "+  recorded: " . join("; ", @$w), "+  now:      " . join("; ", @$g);
+  }
+  for my $k (sort keys %$want) { push @stale, "lock site $k is gone" unless $got->{$k} }
+  print "shape ItemFirst {", join(", ", @{$shape{ItemFirst}}), "}\n";
+  print "shape $_ $shape{$_}\n" for qw(EventHoldsMenuRead ShowGroupCallsShow);
+  print "stale $_\n" for @stale;
+' "$SKILL_DIR/model/lock-sites.txt" "$OUT/lock-sites.txt")
+
+SHAPES=()
+while read -r kind rest; do
+  [[ $kind == shape ]] && SHAPES+=("$rest")
+done <<<"$facts"
+
+STALE=()
+while IFS= read -r line; do
+  case $line in
+    "stale +"*) STALE+=("  ${line#stale +}") ;;
+    "stale "*) STALE+=("${line#stale }") ;;
+  esac
+done <<<"$facts"
+godbus=$(sed -n 's/^require github\.com\/godbus\/dbus\/v5 \(v[^ ]*\)$/\1/p; s/^\tgithub\.com\/godbus\/dbus\/v5 \(v[^ ]*\)$/\1/p' "$ROOT/go.mod" | head -n1)
+[[ $godbus == "$GODBUS_VERSION" ]] || STALE+=("godbus is $godbus, the model was checked against $GODBUS_VERSION (handleCall on its own goroutine, Emit taking only outputHandler.sendLck)")
+
+echo "code shapes (model constants):"
+for s in "${SHAPES[@]}"; do printf '  %-20s %s\n' "${s%% *}" "${s#* }"; done
+if (( ${#STALE[@]} > 0 )); then
+  echo "MODEL STALE: these lock sites no longer match the model, so a result would not describe the code:"
+  printf '  %s\n' "${STALE[@]}"
+  echo "  (lock sites now: $OUT/lock-sites.txt)"
+  exit 1
+fi
+
+cp "$SKILL_DIR/model/MenuLocks.tla" "$OUT/"
+
+procs() { local p=$1 n=$2 i out=(); for ((i = 1; i <= n; i++)); do out+=("$p$i"); done; local IFS=,; echo "${out[*]}"; }
+
+write_cfg() {
+  local name=$1; shift
+  {
+    echo "SPECIFICATION Spec"
+    echo "CONSTANTS"
+    echo "  InitItems = $INIT_ITEMS"
+    echo "  MaxItems = $MAX_ITEMS"
+    echo "  MaxOps = $MAX_OPS"
+    echo "  MaxCalls = $MAX_CALLS"
+    echo "  AppProcs = {$(procs app "$APP_GOROUTINES")}"
+    echo "  CallProcs = {$(procs call "$CALL_GOROUTINES")}"
+    for s in "${SHAPES[@]}"; do echo "  ${s%% *} = ${s#* }"; done
+    echo "SYMMETRY Symmetry"
+    echo "CHECK_DEADLOCK FALSE"
+    echo "INVARIANT TypeOK NoLockLeft $*"
+  } >"$OUT/$name.cfg"
+}
+
+# run NAME INVARIANTS...: prints the violated invariant, "none", or
+# "tool-error".
+run() {
+  local name=$1; shift
+  write_cfg "$name" "$@"
+  (cd "$OUT" && java -XX:+UseParallelGC -cp "$JAR" tlc2.TLC -config "$name.cfg" \
+    -workers "$WORKERS" -metadir "$OUT/meta-$name" -nowarning \
+    -dumpTrace json "$OUT/$name.trace.json" MenuLocks.tla) >"$OUT/$name.out" 2>&1 || true
+  if grep -q '^Model checking completed. No error has been found.' "$OUT/$name.out"; then
+    echo none
+  elif v=$(grep -oE '^Error: Invariant [A-Za-z]+ is violated' "$OUT/$name.out" | awk '{print $3}'); [[ -n $v ]]; then
+    echo "$v"
+  else
+    echo tool-error
+  fi
+}
+
+expected=("${PROPERTIES[@]}")
+[[ -n $ONLY ]] && expected=("$ONLY")
+
+status=0
+start=$SECONDS
+result=$(run main "${expected[@]}")
+case $result in
+  none) echo "PASS  ${expected[*]}" ;;
+  tool-error) echo "TOOL ERROR, see $OUT/main.out"; status=2 ;;
+  *) echo "FAIL  $result"
+     "$SKILL_DIR/scripts/explain-trace" "$OUT/main.trace.json" | sed 's/^/  /'
+     echo "  (full trace: $OUT/main.out)"
+     status=1 ;;
+esac
+echo "model checked in $((SECONDS - start))s"
+
+# Coverage drift: covered code changed since the sync commit in SKILL.md.
+sync=$(sed -n 's/^Sync commit: `\([0-9a-f]*\)`.*/\1/p' "$SKILL_DIR/SKILL.md")
+covered=$(sed -n 's/^- `\([^`]*\)`:.*/\1/p' "$SKILL_DIR/SKILL.md" | sort -u)
+if [[ -n $sync ]] && git -C "$ROOT" cat-file -e "$sync^{commit}" 2>/dev/null; then
+  # shellcheck disable=SC2086
+  drift=$(cd "$ROOT" && git diff --name-only "$sync" -- $covered)
+  if [[ -n $drift ]]; then
+    echo "covered code changed since sync commit $sync, so recheck the model against it:"
+    echo "$drift" | sed 's/^/  /'
+  fi
+else
+  echo "warning: sync commit '$sync' from SKILL.md is not in this clone; cannot check coverage drift."
+fi
+
+exit $status

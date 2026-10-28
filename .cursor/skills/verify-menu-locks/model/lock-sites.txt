@@ -1,0 +1,139 @@
+dbusmenu.go dbusmenu.buildLayout
+  if item == nil > call buildChildren
+  item.m.RLock
+  defer item.m.RUnlock
+  call buildChildren
+dbusmenu.go dbusmenu.buildChildren
+  for _, id := range ids > if child != nil > call buildLayout
+dbusmenu.go dbusmenu.GetLayout
+  menu.m.Lock
+  defer menu.m.Unlock
+  call buildLayout
+dbusmenu.go dbusmenu.GetGroupProperties
+  menu.m.RLock
+  defer menu.m.RUnlock
+  for item := range items > item.m.RLock
+  for item := range items > item.m.RUnlock
+dbusmenu.go dbusmenu.GetProperty
+  menu.m.RLock
+  defer menu.m.RUnlock
+  item.m.RLock
+  defer item.m.RUnlock
+dbusmenu.go dbusmenu.getHandler
+  menu.m.RLock
+  defer menu.m.RUnlock
+  item.m.RLock
+  defer item.m.RUnlock
+dbusmenu.go dbusmenu.event
+  call getHandler
+  handler
+dbusmenu.go dbusmenu.Event
+  call event
+dbusmenu.go dbusmenu.EventGroup
+  for _, event := range events > call event
+dbusmenu.go dbusmenu.AboutToShow
+  menu.m.RLock
+  defer menu.m.RUnlock
+dbusmenu.go dbusmenu.AboutToShowGroup
+  menu.m.RLock
+  defer menu.m.RUnlock
+item.go New
+  call export
+item.go Item.export
+  call createMenu
+  call SetProps
+item.go Item.emit
+  for _, inter := range itemInters > emit
+item.go Item.SetProps
+  for _, p := range props > prop-callback
+  for s := range w.dirty > call emit
+menu.go Item.createMenu
+  call export
+menu.go Menu.updateLayout
+  for _, node := range nodes > emit
+menu.go ItemMenuHandler
+  defer-lock menu
+menu.go Menu.lock
+  menu.m.Lock
+  menu.m.Unlock
+menuitem.go Menu.AddChild
+  defer-lock menu
+  defer-lock child
+  call applyProps
+  call updateLayout
+  call emitPropertiesUpdated
+menuitem.go MenuItem.AddChild
+  defer-lock menu
+  defer-lock item
+  defer-lock child
+  call applyProps
+  call updateLayout
+  call emitPropertiesUpdated
+  if len(parentDirty) > 0 > call emitPropertiesUpdated
+menuitem.go MenuItem.Remove
+  defer-lock menu
+  if parent != item.menu > defer-lock parent
+  call updateLayout
+  if len(parentDirty) > 0 > if p, ok := parent.(*MenuItem); ok > call emitPropertiesUpdated
+menuitem.go appendChild
+  defer-lock menu
+  if dst != menu > defer-lock dst
+  if parent != dst && parent != menu > defer-lock parent
+  call updateLayout
+  if len(parentDirty) > 0 > if p, ok := parent.(*MenuItem); ok > call emitPropertiesUpdated
+  if len(dstDirty) > 0 > if d, ok := dst.(*MenuItem); ok > call emitPropertiesUpdated
+menuitem.go Menu.AppendChild
+  call appendChild
+menuitem.go MenuItem.AppendChild
+  call appendChild
+menuitem.go MenuItem.MoveBefore
+  defer-lock menu
+  if dst != item.menu > defer-lock dst
+  if src != dst && src != item.menu > defer-lock src
+  call updateLayout
+  if len(srcDirty) > 0 > if s, ok := src.(*MenuItem); ok > call emitPropertiesUpdated
+  if len(dstDirty) > 0 > if d, ok := dst.(*MenuItem); ok > call emitPropertiesUpdated
+menuitem.go MenuItem.applyProps
+  for _, p := range props > prop-callback
+menuitem.go MenuItem.emitPropertiesUpdated
+  emit
+menuitem.go MenuItem.RequestActivation
+  emit
+menuitem.go MenuItem.Type
+  item.m.RLock
+  defer item.m.RUnlock
+menuitem.go MenuItem.Label
+  item.m.RLock
+  defer item.m.RUnlock
+menuitem.go MenuItem.Enabled
+  item.m.RLock
+  defer item.m.RUnlock
+menuitem.go MenuItem.Visible
+  item.m.RLock
+  defer item.m.RUnlock
+menuitem.go MenuItem.IconName
+  item.m.RLock
+  defer item.m.RUnlock
+menuitem.go MenuItem.IconData
+  item.m.RLock
+  defer item.m.RUnlock
+menuitem.go MenuItem.Shortcut
+  item.m.RLock
+  defer item.m.RUnlock
+menuitem.go MenuItem.ToggleType
+  item.m.RLock
+  defer item.m.RUnlock
+menuitem.go MenuItem.ToggleState
+  item.m.RLock
+  defer item.m.RUnlock
+menuitem.go MenuItem.VendorProp
+  item.m.RLock
+  defer item.m.RUnlock
+menuitem.go MenuItem.SetProps
+  defer-lock menu
+  defer-lock item
+  call applyProps
+  call emitPropertiesUpdated
+menuitem.go MenuItem.lock
+  item.m.Lock
+  item.m.Unlock

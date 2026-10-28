@@ -1,0 +1,103 @@
+#!/usr/bin/env perl
+# Prints every function in the package's non-test .go files that takes a
+# lock, emits a D-Bus message, runs a handler or prop callback, or calls a
+# function that does, with those steps in source order. Each step is
+# prefixed with the if/for/switch headers around it, so moving a lock under
+# a condition changes the output. check-menu-locks compares this with
+# model/lock-sites.txt.
+use strict;
+use warnings;
+
+my $root = shift // '.';
+my @files = sort grep { !/_test\.go$/ } glob("$root/*.go");
+
+my (%body, %bare, @order, %pkg);
+for my $f (@files) {
+  open my $fh, '<', $f or die "$f: $!";
+  my ($name, @lines, $imports);
+  my $short = $f =~ s{.*/}{}r;
+  while (my $l = <$fh>) {
+    chomp $l;
+    $imports = 1 if $l =~ /^import \($/;
+    $imports = 0 if $imports && $l eq ')';
+    $pkg{$1} = 1 if $imports && $l =~ m{^\t(?:\w+ )?"(?:[^"]*/)?(\w+)(?:/v\d+)?"$};
+    $pkg{$1} = 1 if $l =~ m{^import (?:\w+ )?"(?:[^"]*/)?(\w+)"$};
+    if (!defined $name && $l =~ /^func (?:\(\w+ \*?(\w+)\) )?(\w+)/) {
+      $name = ($1 ? "$1." : '') . $2;
+      $bare{$name} = $2;
+      @lines = ();
+      next if $l =~ /\}$/;
+      next;
+    }
+    next unless defined $name;
+    if ($l eq '}') {
+      $body{"$short $name"} = [@lines];
+      push @order, "$short $name";
+      $bare{"$short $name"} = $bare{$name};
+      undef $name;
+      next;
+    }
+    push @lines, $l;
+  }
+}
+
+my $pkgs = join '|', sort keys %pkg;
+
+sub steps {
+  my ($lines, $callees) = @_;
+  my (@out, @hdr);
+  for my $raw (@$lines) {
+    my $l = $raw =~ s{\s+//.*$}{}r;
+    next if $l =~ /^\s*(?:\/\/.*)?$/;
+    my ($tabs) = $l =~ /^(\t*)/;
+    my $d = length $tabs;
+    $#hdr = $d - 1 if $#hdr >= $d;
+    my $t = $l =~ s/^\s+//r;
+    my $ctx = join '', map { defined $_ ? "$_ > " : '' } @hdr[1 .. $#hdr];
+    my @s;
+    my $rest = $t;
+    while ($rest =~ s/\bdefer\s+([\w.]+)\.lock\(\)\(\)//) { push @s, "defer-lock " . norm($1) }
+    while ($rest =~ s/\b(defer\s+)?([\w.]+)\.m\.(RLock|RUnlock|Lock|Unlock)\(\)//) {
+      push @s, ($1 ? 'defer ' : '') . norm($2) . ".m.$3";
+    }
+    while ($rest =~ s/\b([\w.]+)\.lock\(\)//) { push @s, "lock() " . norm($1) }
+    while ($rest =~ s/\bconn\.Emit\(//) { push @s, 'emit' }
+    while ($rest =~ s/\bh\(eventID//) { push @s, 'handler' }
+    while ($rest =~ s/\bp\(&w\)//) { push @s, 'prop-callback' }
+    # Calls into package functions and methods are steps too. Calls on an
+    # imported package or on Menu.dirty (a set.Set) only share a name.
+    $rest =~ s/\b(?:$pkgs)\.\w+\(//g;
+    $rest =~ s/\.dirty\.\w+\(//g;
+    for my $c (sort keys %$callees) {
+      while ($rest =~ s/(?<![\w])(?:[\w)]+\.)*\Q$c\E\(//) { push @s, "call $c" }
+    }
+    push @out, map { "$ctx$_" } @s;
+    if ($t =~ /^(?:\}\s*else\s*)?(?:if|for|switch|select|else)\b.*\{$/ || $t =~ /^(?:case\b.*|default):$/) {
+      $hdr[$d] = $t =~ s/\s*\{$//r;
+    }
+  }
+  return @out;
+}
+
+sub norm { my $x = shift; $x =~ s/^item\.menu$/menu/; return $x }
+
+my %callees;
+my %sig;
+for (1 .. 10) {
+  my %next;
+  for my $k (@order) {
+    my @s = steps($body{$k}, \%callees);
+    $sig{$k} = \@s;
+    $next{$bare{$k}} = 1 if @s;
+  }
+  last if join(',', sort keys %next) eq join(',', sort keys %callees);
+  %callees = %next;
+}
+delete $callees{lock};
+
+for my $k (@order) {
+  my @s = steps($body{$k}, \%callees);
+  next unless @s;
+  print "$k\n";
+  print "  $_\n" for @s;
+}
