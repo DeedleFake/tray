@@ -1,6 +1,6 @@
 ---
 name: verify-menu-locks
-description: Model-check that deedles.dev/tray's Menu.m and MenuItem.m locks can never deadlock, using a TLA+ model of Go's sync.RWMutex with app goroutines calling the Menu and MenuItem API while godbus serves GetLayout, GetGroupProperties, GetProperty, Event, AboutToShow, and AboutToShowGroup on goroutines of their own. Code shapes are read from every lock site in the package, and any lock site the model does not know stops the run. Use when a change adds, removes, moves, or reorders a Lock, RLock, Unlock, RUnlock, or lock() call, calls a locking method from code that holds a lock, changes when a MenuEventHandler or prop callback runs, or bumps godbus, or when running /verify-menu-locks.
+description: Model-check that deedles.dev/tray's Menu.m and MenuItem.m locks can never deadlock, using a TLA+ model of Go's sync.RWMutex with app goroutines calling the Menu and MenuItem API while godbus serves GetLayout, GetGroupProperties, GetProperty, Event, AboutToShow, and AboutToShowGroup on goroutines of their own. Code shapes are read from every lock site in the package, and any lock site the model does not know stops the run. Use when a change adds, removes, moves, or reorders a Lock, RLock, Unlock, RUnlock, or lock() call, calls a locking method from code that holds a lock, changes when a MenuEventHandler or prop callback runs, changes where a menu method writes its reply or what claimMenuReplies does, or bumps godbus, or when running /verify-menu-locks.
 ---
 
 # Verify menu locks
@@ -63,13 +63,14 @@ App calls take any item the app has, including removed ones, as the API allows. 
 
 The script stops with `MODEL STALE` when the code no longer matches the model:
 
-- Every lock site in the package's non-test `.go` files must match `model/lock-sites.txt`, unless it matches one of the code shapes below. A lock site is a function that takes or releases a lock, emits a D-Bus message, runs a handler or prop callback, or calls a function that does. `scripts/lock-sites` lists the steps of each one in order, including the `if` and `for` headers around them.
+- Every lock site in the package's non-test `.go` files must match `model/lock-sites.txt`, unless it matches one of the code shapes below. A lock site is a function that takes or releases a lock, emits a signal or sends a reply with `conn.Send`, runs a handler or prop callback, or calls a function that does. `scripts/lock-sites` lists the steps of each one in order, including the `if` and `for` headers around them.
+- `claimMenuReplies` must not be a lock site, whatever the record says. It runs on godbus's reading goroutine, which the model assumes takes no menu lock.
 - godbus must be the version in `GODBUS_VERSION` in the script.
 
 These are assumptions the script cannot read from the code:
 
-- godbus runs each method call on its own goroutine (`go conn.handleCall(msg)` in godbus `conn.go`), and its reading goroutine takes no menu lock.
-- `conn.Emit` and godbus writing a reply take `outputHandler.closed.lck` for reading and then `outputHandler.sendLck`, and nothing else, and they release both after the write (godbus `sendAndIfClosed`). Only `Conn.Close` writes `closed.lck`, and the menu never calls it under a lock. So these are not steps in the model. A write that never finishes, for example because the bus stops reading, would hold whatever menu locks the caller holds. The model assumes every write finishes.
+- godbus runs each method call on its own goroutine (`go conn.handleCall(msg)` in godbus `conn.go`), and its reading goroutine takes no menu lock. That goroutine runs the incoming interceptor, `claimMenuReplies`, before it starts the call's goroutine.
+- `conn.Emit`, `conn.Send`, and godbus writing a reply take `outputHandler.closed.lck` for reading and then `outputHandler.sendLck`, and nothing else, and they release both after the write (godbus `sendAndIfClosed`). Only `Conn.Close` writes `closed.lck`, and the menu never calls it under a lock. So these are not steps in the model. A write that never finishes, for example because the bus stops reading, would hold whatever menu locks the caller holds. That includes `Menu.m` in `SetProps` while it emits, and in `GetLayout`, `GetGroupProperties`, and `GetProperty` while they send their reply. The model assumes every write finishes.
 - Changes to the menu tree happen under `Menu.m`, and so do all reads of it. So the model makes a function's tree reads and writes at the step that takes `Menu.m`.
 - The modeled `MenuEventHandler` calls `SetProps` on its own item. A handler that calls something else runs the same way, with nothing held.
 - `prop.Properties` locks, used by `Item.SetProps` and the `Menu` property getters, are never taken while a menu lock is held. They are separate from this model.
@@ -117,9 +118,10 @@ Each step in the model carries an `at` string naming the statement it comes from
 | `MoveHead`, `MoveTail` | `appendChild` (behind both `AppendChild` methods) and `MenuItem.MoveBefore`: Menu lock, `getParent`, then `dst` and the old parent under the same conditions as the code |
 | `Getter` | `MenuItem.Label`, `Type`, `Enabled`, `Visible`, `IconName`, `IconData`, `Shortcut`, `ToggleType`, `ToggleState`, `VendorProp` |
 | `MenuHandler` | `ItemMenuHandler`'s prop callback, run by `Item.SetProps` |
-| `GetLayoutHead`, `GetLayoutTail`, `Walk` | `dbusmenu.GetLayout` under `menu.m.Lock()`, then `buildLayout` read-locking each item while `buildChildren` walks under it |
-| `GroupHead`, `GroupTail` | `dbusmenu.GetGroupProperties`: `menu.m.RLock()`, then each item's `RLock` and `RUnlock` in turn |
-| `PropHead`, `PropTail` | `dbusmenu.GetProperty`: `menu.m.RLock()`, then the item's |
+| `GetLayoutHead`, `GetLayoutTail`, `Walk` | `dbusmenu.GetLayout` under `menu.m.Lock()`, then `buildLayout` read-locking each item while `buildChildren` walks under it, then `reply2` before the unlock |
+| `GroupHead`, `GroupTail` | `dbusmenu.GetGroupProperties`: `menu.m.RLock()`, then each item's `RLock` and `RUnlock` in turn, then `reply` before the unlock |
+| `PropHead`, `PropTail` | `dbusmenu.GetProperty`: `menu.m.RLock()`, then the item's, then `reply` before both unlocks |
+| `Send` | `reply`, `reply2`, and `dbusmenu.send`, which write the reply with `conn.Send`. Not a step, like `Emit`. |
 | `EventHead`, `EventTail` | `dbusmenu.event` and `getHandler`, then the handler |
 | `ShowProg`, `ShowGroupProg` | `dbusmenu.AboutToShow` and `AboutToShowGroup` |
 | `Step` | `sync.RWMutex` `Lock`, `RLock`, `Unlock`, and `RUnlock` in Go's `src/sync/rwmutex.go` |
@@ -130,14 +132,14 @@ None. The current code passes every property within the bounds above.
 
 ## Keep it in step with the code
 
-Sync commit: `8f73cef` (the model was last confirmed to describe the covered code at this commit)
+Sync commit: `9d7066e` (the model was last confirmed to describe the covered code at this commit)
 
 Covered code:
 
 - `menu.go`: `Menu.lock`, `Menu.updateLayout`, `ItemMenuHandler`
 - `menuitem.go`: `Menu.AddChild`, `MenuItem.AddChild`, `MenuItem.Remove`, `appendChild`, `MenuItem.MoveBefore`, `MenuItem.SetProps`, `MenuItem.lock`, `MenuItem.getParent`, the `MenuItem` getters
-- `dbusmenu.go`: `GetLayout`, `buildLayout`, `buildChildren`, `GetGroupProperties`, `GetProperty`, `getHandler`, `event`, `Event`, `EventGroup`, `AboutToShow`, `AboutToShowGroup`
-- `item.go`: `Item.SetProps`, for when prop callbacks run
+- `dbusmenu.go`: `GetLayout`, `buildLayout`, `buildChildren`, `GetGroupProperties`, `GetProperty`, `getHandler`, `event`, `Event`, `EventGroup`, `AboutToShow`, `AboutToShowGroup`, `claimMenuReplies`, `reply`, `reply2`, `dbusmenu.send`
+- `item.go`: `Item.SetProps`, for when prop callbacks run, and `New`, for the connection options
 - `go.mod`: the `github.com/godbus/dbus/v5` version
 
 The script prints the covered files that changed since the sync commit. The lock-site check catches lock changes on its own, but a change to the tree logic (`getParent`, `setChildren`, `Menu.nodes`) can change which locks a function takes without changing its lock sites. After you confirm that the model still describes the code at a newer commit, move the sync commit forward to it. Never move it without that check.

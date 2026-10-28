@@ -8,12 +8,13 @@
 (*                                                                         *)
 (* Mutexes: 0 is Menu.m and an item id is that MenuItem.m.                 *)
 (*                                                                         *)
-(* Two kinds of code are not steps. conn.Emit and godbus writing a reply   *)
-(* take only godbus's own send locks (conn.go sendAndIfClosed), which      *)
-(* guard nothing else and are released after the write, so they change    *)
-(* nothing another goroutine can wait on. A function's reads and writes of *)
-(* the menu tree happen under Menu.m, which every other reader of the tree *)
-(* needs, so they happen at the step that took Menu.m.                     *)
+(* Two kinds of code are not steps. conn.Emit, conn.Send, and godbus       *)
+(* writing a reply take only godbus's own send locks (conn.go              *)
+(* sendAndIfClosed), which guard nothing else and are released after the   *)
+(* write, so they change nothing another goroutine can wait on. A          *)
+(* function's reads and writes of the menu tree happen under Menu.m, which *)
+(* every other reader of the tree needs, so they happen at the step that   *)
+(* took Menu.m.                                                            *)
 (*                                                                         *)
 (* File references are to the repo root. "godbus" is                       *)
 (* github.com/godbus/dbus/v5 at the version in go.mod.                     *)
@@ -63,8 +64,10 @@ Lock(m, at) == <<S("Lock", m, at)>>
 Unlock(m, at) == <<S("Unlock", m, at)>>
 RLock(m, at) == <<S("RLock", m, at)>>
 RUnlock(m, at) == <<S("RUnlock", m, at)>>
-\* conn.Emit and godbus's reply. Not steps, see the top.
+\* conn.Emit, a menu method's conn.Send of its own reply, and godbus's
+\* reply. Not steps, see the top.
 Emit(at) == <<>>
+Send(at) == <<>>
 Reply == <<>>
 
 RECURSIVE Cat(_)
@@ -214,7 +217,9 @@ MenuHandler == Lock(Root, "menu.go ItemMenuHandler: defer item.menu.lock()()")
 
 -----------------------------------------------------------------------------
 (* Host calls, dbusmenu.go. godbus handleCall runs each on its own         *)
-(* goroutine and writes the reply after the method returns.                *)
+(* goroutine. GetLayout, GetGroupProperties, and GetProperty write their   *)
+(* reply with conn.Send before their deferred unlocks. For the others,     *)
+(* godbus writes the reply after the method returns.                       *)
 
 \* GetLayout(parentID, -1): Lock Menu.m, then buildLayout and
 \* buildChildren read-lock each item while they walk its children, so an
@@ -231,9 +236,9 @@ Walk(n, d) ==
 GetLayoutHead(pid) == Lock(Root, "dbusmenu.go GetLayout: menu.m.Lock()")
                       \o <<Plan("GetLayout", pid, 0, "dbusmenu.go GetLayout: menu.nodes[parentID]")>>
 GetLayoutTail(pid) ==
-  (IF pid # Root /\ pid \notin nodes THEN <<>> ELSE Walk(pid, MaxItems + 1))
+  (IF pid # Root /\ pid \notin nodes THEN <<>>
+   ELSE Walk(pid, MaxItems + 1) \o Send("dbusmenu.go GetLayout: reply2(menu, call, ..)"))
   \o Unlock(Root, "dbusmenu.go GetLayout: deferred menu.m.Unlock()")
-  \o Reply
 
 \* GetGroupProperties(nil, ..): RLock Menu.m, then each item in turn.
 GroupHead == RLock(Root, "dbusmenu.go GetGroupProperties: menu.m.RLock()")
@@ -243,8 +248,8 @@ GroupTail ==
   Cat([i \in 1..Len(ns) |->
          RLock(ns[i], "dbusmenu.go GetGroupProperties: item.m.RLock()")
          \o RUnlock(ns[i], "dbusmenu.go GetGroupProperties: item.m.RUnlock()")])
+  \o Send("dbusmenu.go GetGroupProperties: reply(menu, call, r)")
   \o RUnlock(Root, "dbusmenu.go GetGroupProperties: deferred menu.m.RUnlock()")
-  \o Reply
 
 \* GetProperty(id, ..): RLock Menu.m, then the item.
 PropHead(x) == RLock(Root, "dbusmenu.go GetProperty: menu.m.RLock()")
@@ -252,10 +257,10 @@ PropHead(x) == RLock(Root, "dbusmenu.go GetProperty: menu.m.RLock()")
 PropTail(x) ==
   (IF x \in nodes
    THEN RLock(x, "dbusmenu.go GetProperty: item.m.RLock()")
+        \o Send("dbusmenu.go GetProperty: reply(menu, call, v)")
         \o RUnlock(x, "dbusmenu.go GetProperty: deferred item.m.RUnlock()")
    ELSE <<>>)
   \o RUnlock(Root, "dbusmenu.go GetProperty: deferred menu.m.RUnlock()")
-  \o Reply
 
 \* Event(id, ..): event calls getHandler, which read-locks Menu.m and the
 \* item and returns the handler. The handler then runs with whatever event

@@ -16,7 +16,7 @@ MAX_LABEL=${MAX_LABEL:-2}
 # Properties the current code is known to break, as PROPERTY:BOUND. The
 # property must hold with the BOUND constant FALSE and is expected to fail
 # with it TRUE. Remove an entry once the code is fixed and the check passes it.
-KNOWN_FINDINGS=(PropsConverge:LateReply)
+KNOWN_FINDINGS=()
 
 PROPERTIES=(LayoutConverges PropsConverge RevisionsIncrease LabelChangeKeepsMenuOpen)
 
@@ -72,6 +72,16 @@ flag RemoveSignalsLayout "$(anchor menuitem.go 'func \(item \*MenuItem\) Remove\
 flag AppendSignalsLayout "$(anchor menuitem.go 'func appendChild\('"$BODY$TOP"'updateLayout\(')"
 flag MoveBeforeSignalsLayout "$(anchor menuitem.go 'func \(item \*MenuItem\) MoveBefore\('"$BODY$TOP"'updateLayout\(')"
 flag SetPropsSignalsProps "$(anchor menuitem.go 'func \(item \*MenuItem\) SetProps\('"$BODY$TOP"'emitPropertiesUpdated\(')"
+# Not a model constant itself: LateReply is its negation. TRUE when the
+# props-carrying methods write their reply under Menu.m and godbus's own
+# reply is switched off for them.
+REPLY_UNDER_LOCK=$(all \
+  "$(anchor item.go 'func New\('"$BODY"'dbus\.ConnectSessionBus\(dbus\.WithIncomingInterceptor\(claimMenuReplies\)\)')" \
+  "$(anchor dbusmenu.go 'func claimMenuReplies\('"$BODY"'msg\.Flags \|= dbus\.FlagNoReplyExpected \| flagReplyOwed')" \
+  "$(anchor dbusmenu.go 'func \(menu \*dbusmenu\) send\('"$BODY"'conn\.Send\(')" \
+  "$(anchor dbusmenu.go 'func \(menu \*dbusmenu\) GetLayout\(call dbus\.Message,'"$BODY"'\n\treturn reply2\(menu, call, ')" \
+  "$(anchor dbusmenu.go 'func \(menu \*dbusmenu\) GetGroupProperties\(call dbus\.Message,'"$BODY"'\n\treturn reply\(menu, call, ')")
+LATE_REPLY=$([[ $REPLY_UNDER_LOCK == TRUE ]] && echo FALSE || echo TRUE)
 flag SetPropsSignalsLayout "$(anchor menuitem.go 'func \(item \*MenuItem\) SetProps\('"$BODY"'updateLayout\(')"
 
 # Assumptions the model's steps rest on. Each must hold, or the model no
@@ -81,11 +91,12 @@ assume() { [[ $2 == TRUE ]] || ASSUMPTIONS+=("$1"); }
 for fn in 'func \(menu \*Menu\) AddChild\(' 'func \(item \*MenuItem\) AddChild\(' 'func \(item \*MenuItem\) Remove\(\) error \{' 'func appendChild\(' 'func \(item \*MenuItem\) MoveBefore\(' 'func \(item \*MenuItem\) SetProps\('; do
   assume "menu lock first in ${fn//\\/}" "$(anchor menuitem.go "$fn"'[^\n]*\n\tdefer (?:item\.)?menu\.lock\(\)\(\)\n')"
 done
-assume "GetLayout holds menu.m while it builds the layout" "$(anchor dbusmenu.go 'func \(menu \*dbusmenu\) GetLayout\('"$BODY"'menu\.m\.Lock\(\)\n\tdefer menu\.m\.Unlock\(\)'"$BODY"'layout = menu\.buildLayout\(parent, recursionDepth, propertyNames\)')"
+assume "GetLayout holds menu.m while it builds the layout" "$(anchor dbusmenu.go 'func \(menu \*dbusmenu\) GetLayout\('"$BODY"'menu\.m\.Lock\(\)\n\tdefer menu\.m\.Unlock\(\)'"$BODY"'menu\.buildLayout\(parent, recursionDepth, propertyNames\)')"
 assume "buildLayout copies every property into the reply" "$(anchor dbusmenu.go 'func \(menu \*dbusmenu\) buildLayout\('"$BODY"'Properties: mapSlice\(item\.props, nil\)')"
 assume "updateLayout emits LayoutUpdated for each node it is given" "$(anchor menu.go 'for _, node := range nodes \{\s*id := node\.getID\(\)\s*err := menu\.item\.conn\.Emit\(menuPath, "com\.canonical\.dbusmenu\.LayoutUpdated"')"
 
 echo "code facts (model constants):"
+printf '  %-25s %s\n' LateReply "$LATE_REPLY"
 for k in "${FLAG_NAMES[@]}"; do
   v="FLAG_$k"; printf '  %-25s %s\n' "$k" "${!v}"
 done
@@ -139,7 +150,7 @@ for p in "${PROPERTIES[@]}"; do is_known "$p" || expected+=("$p"); done
 
 status=0
 start=$SECONDS
-result=$(run main TRUE "${expected[@]}")
+result=$(run main "$LATE_REPLY" "${expected[@]}")
 case $result in
   none) echo "PASS  ${expected[*]}" ;;
   tool-error) echo "TOOL ERROR, see $OUT/main.out"; status=2 ;;
@@ -162,6 +173,16 @@ for entry in "${KNOWN_FINDINGS[@]}"; do
     *) echo "FAIL  $r while checking $f (counterexample: $OUT/$f.out)"; [[ $status == 0 ]] && status=1 ;;
   esac
 done
+# The model must still find the race without the fix, or a pass above
+# proves nothing about it.
+if [[ -z $ONLY ]]; then
+  r=$(run PropsConverge-with-LateReply TRUE PropsConverge)
+  case $r in
+    PropsConverge) echo "PASS  PropsConverge fails with LateReply TRUE, as it must" ;;
+    none) echo "FAIL  PropsConverge passes with LateReply TRUE, so the model no longer sees the race"; status=1 ;;
+    *) echo "TOOL ERROR, see $OUT/PropsConverge-with-LateReply.out"; status=2 ;;
+  esac
+fi
 echo "model checked in $((SECONDS - start))s"
 
 # Coverage drift: covered code changed since the sync commit in SKILL.md.
