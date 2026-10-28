@@ -1,8 +1,8 @@
 module deedles.dev/tray
 
-go 1.26.9
+go 1.26.10
 
-require github.com/godbus/dbus/v5 v5.2.3
+require github.com/godbus/dbus/v5 v5.2.4
 
 require (
 	4d63.com/gocheckcompilerdirectives v1.4.0 // indirect
