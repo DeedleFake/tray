@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
 	"strings"
 
+	"deedles.dev/tray/internal/set"
 	"github.com/godbus/dbus/v5"
 )
 
@@ -38,6 +40,89 @@ func ClickedHandler(handler func(data any, timestamp uint32) error) MenuEventHan
 }
 
 type dbusmenu Menu
+
+// godbus writes a method's reply only after the method returns, which is
+// after it has released menu.m. A SetProps in that gap emits a newer
+// ItemsPropertiesUpdated that reaches the host first, and the host then
+// applies the stale reply over it. So the methods whose replies carry item
+// properties write the reply themselves while they still hold menu.m, and
+// claimMenuReplies stops godbus from sending a second one.
+
+// flagReplyOwed is a flag bit the D-Bus spec leaves unused. It is only
+// ever set in memory, on a call that claimMenuReplies also marked
+// FlagNoReplyExpected, so godbus never answers it on success.
+const flagReplyOwed dbus.Flags = 0x80
+
+// replyingMethods is every method that takes a dbus.Message. A method
+// needs that parameter to address its reply, so the parameter is the
+// opt-in, and there is no second list to keep in sync.
+var replyingMethods = methodsTaking(reflect.TypeFor[*dbusmenu](), reflect.TypeFor[dbus.Message]())
+
+func methodsTaking(t, param reflect.Type) set.Set[string] {
+	s := make(set.Set[string])
+	for m := range t.Methods() {
+		for in := range m.Type.Ins() {
+			if in == param {
+				s.Add(m.Name)
+				break
+			}
+		}
+	}
+	return s
+}
+
+// claimMenuReplies is the connection's incoming interceptor. godbus runs
+// it on the reader goroutine before dispatching the call, so it must not
+// take any menu lock.
+func claimMenuReplies(msg *dbus.Message) {
+	if msg.Type != dbus.TypeMethodCall || msg.Flags&dbus.FlagNoReplyExpected != 0 {
+		return
+	}
+	path, _ := msg.Headers[dbus.FieldPath].Value().(dbus.ObjectPath)
+	if path != menuPath {
+		return
+	}
+	if iface, ok := msg.Headers[dbus.FieldInterface].Value().(string); ok && iface != menuInter {
+		return
+	}
+	member, _ := msg.Headers[dbus.FieldMember].Value().(string)
+	if !replyingMethods.Contains(member) {
+		return
+	}
+	msg.Flags |= dbus.FlagNoReplyExpected | flagReplyOwed
+}
+
+// reply sends v as the reply to call and returns it, so that the reply
+// body is always exactly what the method returns. The caller must hold
+// menu.m.
+func reply[T any](menu *dbusmenu, call dbus.Message, v T) (T, *dbus.Error) {
+	menu.send(call, v)
+	return v, nil
+}
+
+func reply2[T, U any](menu *dbusmenu, call dbus.Message, v T, u U) (T, U, *dbus.Error) {
+	menu.send(call, v, u)
+	return v, u, nil
+}
+
+// send builds the reply the same way godbus's handleCall does. Errors
+// stay with godbus, which sends them regardless of the flags.
+func (menu *dbusmenu) send(call dbus.Message, body ...any) {
+	if call.Flags&flagReplyOwed == 0 {
+		return
+	}
+	h := map[dbus.HeaderField]dbus.Variant{
+		dbus.FieldReplySerial: dbus.MakeVariant(call.Serial()),
+		dbus.FieldSignature:   dbus.MakeVariant(dbus.SignatureOf(body...)),
+	}
+	if s, ok := call.Headers[dbus.FieldSender]; ok {
+		h[dbus.FieldDestination] = s
+	}
+	c := menu.item.conn.Send(&dbus.Message{Type: dbus.TypeMethodReply, Headers: h, Body: body}, nil)
+	if c.Err != nil {
+		logger.Error("write menu reply", "err", c.Err)
+	}
+}
 
 func (menu *dbusmenu) buildLayout(item *MenuItem, depth int, props []string) menuLayout {
 	if item == nil {
@@ -83,7 +168,7 @@ func (menu *dbusmenu) buildChildren(parent *MenuItem, depth int, props []string)
 	return children
 }
 
-func (menu *dbusmenu) GetLayout(parentID int, recursionDepth int, propertyNames []string) (revision uint32, layout menuLayout, derr *dbus.Error) {
+func (menu *dbusmenu) GetLayout(call dbus.Message, parentID int, recursionDepth int, propertyNames []string) (uint32, menuLayout, *dbus.Error) {
 	logger.Info("menu method", "name", "GetLayout", "parentID", parentID, "propertyNames", propertyNames)
 
 	// TODO: Find a way to do this without locking it.
@@ -98,11 +183,10 @@ func (menu *dbusmenu) GetLayout(parentID int, recursionDepth int, propertyNames 
 		}
 	}
 
-	layout = menu.buildLayout(parent, recursionDepth, propertyNames)
-	return menu.revision, layout, nil
+	return reply2(menu, call, menu.revision, menu.buildLayout(parent, recursionDepth, propertyNames))
 }
 
-func (menu *dbusmenu) GetGroupProperties(ids []int, propertyNames []string) ([]menuProps, *dbus.Error) {
+func (menu *dbusmenu) GetGroupProperties(call dbus.Message, ids []int, propertyNames []string) ([]menuProps, *dbus.Error) {
 	logger.Info("menu method", "name", "GetGroupProperties", "ids", ids, "propertyNames", propertyNames)
 
 	menu.m.RLock()
@@ -129,10 +213,10 @@ func (menu *dbusmenu) GetGroupProperties(ids []int, propertyNames []string) ([]m
 		})
 		item.m.RUnlock()
 	}
-	return r, nil
+	return reply(menu, call, r)
 }
 
-func (menu *dbusmenu) GetProperty(id int, name string) (any, *dbus.Error) {
+func (menu *dbusmenu) GetProperty(call dbus.Message, id int, name string) (any, *dbus.Error) {
 	logger.Info("menu method", "name", "GetProperty", "id", id, "name", name)
 
 	menu.m.RLock()
@@ -151,7 +235,7 @@ func (menu *dbusmenu) GetProperty(id int, name string) (any, *dbus.Error) {
 		return nil, dbus.MakeFailedError(fmt.Errorf("property %q not found", name))
 	}
 
-	return v, nil
+	return reply(menu, call, v)
 }
 
 func (menu *dbusmenu) getHandler(id int) MenuEventHandler {

@@ -79,6 +79,9 @@ facts=$(perl -e '
     push @stale, "$k changed:", "+  recorded: " . join("; ", @$w), "+  now:      " . join("; ", @$g);
   }
   for my $k (sort keys %$want) { push @stale, "lock site $k is gone" unless $got->{$k} }
+  for my $k (grep { / claimMenuReplies$/ } sort keys %$got) {
+    push @stale, "$k is a lock site, but it runs on the goroutine that reads every incoming message, which the model assumes takes no menu lock: " . join("; ", @{$got->{$k}});
+  }
   print "shape ItemFirst {", join(", ", @{$shape{ItemFirst}}), "}\n";
   print "shape $_ $shape{$_}\n" for qw(EventHoldsMenuRead ShowGroupCallsShow);
   print "stale $_\n" for @stale;

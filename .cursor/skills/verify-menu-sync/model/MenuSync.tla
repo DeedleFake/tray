@@ -19,10 +19,9 @@ CONSTANTS
   MaxItems,  \* ids Menu.newItem hands out
   MaxOps,    \* app calls into the Menu and MenuItem API
   MaxLabel,  \* label values per item
-  \* Bound: godbus handleCall (export.go) writes a method's reply after
-  \* the method returns, so after its deferred Menu.m unlock.
-  LateReply,
   \* Code facts. scripts/check-menu-sync reads each one from the code.
+  LateReply,               \* GetLayout and GetGroupProperties leave their reply to godbus,
+                           \* which writes it after the deferred Menu.m unlock
   RevisionBumps,           \* updateLayout: menu.revision++ before its Emit loop
   AddChildSignalsLayout,   \* Menu.AddChild and MenuItem.AddChild call updateLayout
   RemoveSignalsLayout,     \* MenuItem.Remove calls updateLayout
@@ -201,8 +200,9 @@ AppMovesBefore == AppCall /\ \E c, s \in nodes : MoveBefore(c, s)
 
 \* godbus runs each call on its own goroutine. GetLayout builds its reply
 \* under Menu.m. GetGroupProperties reads every id in the call that is in
-\* Menu.nodes under Menu.m. With LateReply, godbus writes the reply as a
-\* later step.
+\* Menu.nodes under Menu.m. Without LateReply, the method writes its reply
+\* with conn.Send before it unlocks, so building and writing are one step.
+\* With LateReply, godbus writes the reply as a later step.
 ReplyTo(c) ==
   IF c.kind = "layout"
   THEN [t |-> "layout-reply", gen |-> c.gen, view |-> View(kids, label)]

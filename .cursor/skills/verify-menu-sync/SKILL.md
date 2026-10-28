@@ -1,11 +1,11 @@
 ---
 name: verify-menu-sync
-description: Model-check that a desktop tray host's copy of a deedles.dev/tray menu ends up matching the app's Menu after any mix of AddChild, Remove, AppendChild, MoveBefore, and SetProps calls racing with the host's GetLayout and GetGroupProperties calls, using a TLA+ model whose code facts are read from menu.go, menuitem.go, and dbusmenu.go. Use when a change touches updateLayout, emitPropertiesUpdated, setChildren, Menu or MenuItem methods that change the menu, GetLayout, buildLayout, GetGroupProperties, Menu.m locking, or the godbus version, or when running /verify-menu-sync.
+description: Model-check that a desktop tray host's copy of a deedles.dev/tray menu ends up matching the app's Menu after any mix of AddChild, Remove, AppendChild, MoveBefore, and SetProps calls racing with the host's GetLayout and GetGroupProperties calls, using a TLA+ model whose code facts are read from menu.go, menuitem.go, dbusmenu.go, and item.go. Use when a change touches updateLayout, emitPropertiesUpdated, setChildren, Menu or MenuItem methods that change the menu, GetLayout, buildLayout, GetGroupProperties, claimMenuReplies, reply, Menu.m locking, the connection options in New, or the godbus version, or when running /verify-menu-sync.
 ---
 
 # Verify menu sync
 
-A tray host never reads the app's `Menu` directly. It keeps its own copy, built from `GetLayout` and `GetGroupProperties` replies and patched by `LayoutUpdated` and `ItemsPropertiesUpdated` signals. The model in `model/MenuSync.tla` checks that the copy ends up matching the menu. TLC, the TLA+ model checker, tries every order of app calls, signals, and replies within the bounds below, including a menu change that lands between the moment `GetLayout` reads the menu and the moment godbus writes the reply. Tests only cover the orders someone wrote down.
+A tray host never reads the app's `Menu` directly. It keeps its own copy, built from `GetLayout` and `GetGroupProperties` replies and patched by `LayoutUpdated` and `ItemsPropertiesUpdated` signals. The model in `model/MenuSync.tla` checks that the copy ends up matching the menu. TLC, the TLA+ model checker, tries every order of app calls, signals, and replies within the bounds below, including a menu change that lands right after `GetLayout` or `GetGroupProperties` reads the menu. Tests only cover the orders someone wrote down.
 
 The host in the model is the GNOME AppIndicator extension's `DBusClient` (`dbusMenu.js` in ubuntu/gnome-shell-extension-appindicator) with the menu open.
 
@@ -19,7 +19,7 @@ From the repo root:
 
 It needs Java 11 or newer, `perl`, and `curl`. Without a system Java, `mise exec java@temurin-21 -- <command>` works. The first run downloads `tla2tools.jar` 1.8.0 to `~/.cache/deedles-tray/` and checks its sha256. 1.8.0 is a prerelease, and upstream sometimes replaces its jar. If a fresh download fails the check, compare its sha256 with the digest GitHub shows for the release asset, then update `TLA_SHA256` in both check scripts. Set `TLA2TOOLS_JAR` to use another copy. A run takes about 5 seconds. `TLC_WORKERS=2` limits the cores it uses.
 
-To check one property alone, ignoring the known findings list:
+To check one property alone, skipping the known findings list and the `LateReply` TRUE run:
 
 ```bash
 .cursor/skills/verify-menu-sync/scripts/check-menu-sync --only LayoutConverges
@@ -56,7 +56,7 @@ The model assumes these, and the script stops with `MODEL STALE` when the code n
 
 These are assumptions the script cannot read from the code:
 
-- godbus serves each call on its own goroutine and writes the reply after the method returns (`handleCall` in godbus `export.go`). The `LateReply` constant is this, and it is TRUE in every run except the one that checks the known finding without it.
+- godbus serves each call on its own goroutine (`handleCall` in godbus `export.go`). It writes a method's reply after the method returns, unless the call has `FlagNoReplyExpected`, and it writes an error reply either way. `claimMenuReplies` sets that flag before dispatch on the calls whose method writes its own reply, so those get exactly one reply, written before the method unlocks `Menu.m`. `conn.Send` returns only after the reply is written.
 - All messages from the item reach the host in the order the item sent them, as D-Bus guarantees for one connection.
 - The host behaves like the GNOME extension with its menu open. It answers `LayoutUpdated` by cancelling its last layout update, including the `GetGroupProperties` call it started, and calling `GetLayout(0, -1)`. It applies `ItemsPropertiesUpdated` only to items it already has. It replaces its copy with each `GetLayout` reply, properties included, and calls `GetGroupProperties` for the items that are new to it. With the menu closed, GNOME defers signals until the menu opens and then refetches everything, which the model does not cover.
 - Every item gets a label when it is created. Other properties change the same way a label does.
@@ -65,8 +65,9 @@ These are assumptions the script cannot read from the code:
 
 - `PASS` lists every property that held in every reachable state.
 - `FAIL <property>` means a new break. Open the `.out` file it names. Its `State N:` lines are the steps, and the variables under each step show what changed.
-- `KNOWN FINDING still present` is expected for the finding below. The check exits 0 when only that fails.
-- `FIXED? <property> now passes` means the model no longer finds that break. Confirm the fix in the code with a test, since a code fact can flip without the bug being gone, then remove the entry from `KNOWN_FINDINGS` in the script and from Findings below. The check exits 1 until you do. Sending `LayoutUpdated` from `SetProps` also makes the finding pass, because the host then refetches on every label change. That trade is the `LabelChangeKeepsMenuOpen` failure printed next to it.
+- `PASS  PropsConverge fails with LateReply TRUE, as it must` is the control run. It forces `LateReply` TRUE whatever the code says, so it shows the model still finds the stale reply described under Findings. `FAIL  PropsConverge passes with LateReply TRUE` means the model lost that race, and a pass of the main run no longer says anything about it.
+- `KNOWN FINDING still present` is expected for a property listed in `KNOWN_FINDINGS` in the script. The check exits 0 when only that fails. The list is empty now.
+- `FIXED? <property> now passes` means the model no longer finds a listed break. Confirm the fix in the code with a test, since a code fact can flip without the bug being gone, then remove the entry from `KNOWN_FINDINGS` and from Findings below. The check exits 1 until you do.
 - `MODEL STALE` means one of the assumptions above no longer matches the code. See the next section.
 - `TOOL ERROR` means TLC did not finish. Read the `.out` file. It is usually a model syntax or type error.
 
@@ -78,12 +79,13 @@ The script prints `code facts` first. Each is a model constant read from the cod
 
 | Constant | TRUE when the code has | Property that fails when it flips |
 |---|---|---|
+| `LateReply` | not all of these: `New` connects with `dbus.WithIncomingInterceptor(claimMenuReplies)`, `claimMenuReplies` sets `dbus.FlagNoReplyExpected \| flagReplyOwed`, `dbusmenu.send` calls `conn.Send`, and `GetLayout` and `GetGroupProperties` take a `call dbus.Message` and end with a top-level `return reply2(menu, call, ...` and `return reply(menu, call, ...`. FALSE is correct. | `PropsConverge` when TRUE |
 | `RevisionBumps` | `menu.revision++` in `updateLayout` before the loop that emits `LayoutUpdated` with `menu.revision` | `RevisionsIncrease` |
 | `AddChildSignalsLayout` | an unconditional call to `updateLayout` in both `Menu.AddChild` and `MenuItem.AddChild` | `LayoutConverges` |
 | `RemoveSignalsLayout` | an unconditional call to `updateLayout` in `MenuItem.Remove` | `LayoutConverges` |
 | `AppendSignalsLayout` | an unconditional call to `updateLayout` in `appendChild`, behind both `AppendChild` methods | `LayoutConverges` |
 | `MoveBeforeSignalsLayout` | an unconditional call to `updateLayout` in `MenuItem.MoveBefore` | `LayoutConverges` |
-| `SetPropsSignalsProps` | an unconditional call to `emitPropertiesUpdated` in `MenuItem.SetProps` | `PropsConverge`, in the run with `LateReply` FALSE |
+| `SetPropsSignalsProps` | an unconditional call to `emitPropertiesUpdated` in `MenuItem.SetProps` | `PropsConverge` |
 | `SetPropsSignalsLayout` | any call to `updateLayout` in `MenuItem.SetProps`. FALSE is correct. | `LabelChangeKeepsMenuOpen` when TRUE |
 
 An unconditional call is a statement at the top level of the method body, one tab deep. A call moved under an `if` turns the fact FALSE, and the model then treats the method as never sending the signal. When a condition is intended, model it as its own action instead of trusting the FALSE. The modeled host refetches the whole layout on any `LayoutUpdated`, so the facts only ask whether a method sends one, not which parent it names.
@@ -107,16 +109,18 @@ A new method that changes the menu has no fact and no action. Model it before tr
 | `RemoveItem` | `MenuItem.Remove`: the parent's `setChildren`, `delete(item.menu.nodes, ...)`, `updateLayout(parent)`, the parent's `children-display` |
 | `AppendChild` | `appendChild`, behind `Menu.AppendChild` and `MenuItem.AppendChild` |
 | `MoveBefore` | `MenuItem.MoveBefore` |
-| `Serve` of a layout call | `dbusmenu.GetLayout` under `Menu.m`, through `buildLayout` and `buildChildren` |
-| `Serve` of a props call | `dbusmenu.GetGroupProperties` under `Menu.m` |
-| `Reply` | godbus `handleCall` writing the reply after the method returns |
+| `Serve` of a layout call | `dbusmenu.GetLayout` under `Menu.m`, through `buildLayout` and `buildChildren`, then `reply2` writing the reply with `conn.Send` before the unlock |
+| `Serve` of a props call | `dbusmenu.GetGroupProperties` under `Menu.m`, then `reply` writing the reply with `conn.Send` before the unlock |
+| `Reply` | only with `LateReply`: godbus `handleCall` writing the reply after the method returns |
 | `Host` | `_onSignal`, `_onPropertiesUpdated`, `_layoutUpdateUpdateAsync`, `_doLayoutUpdate`, and `_requestProperties` in the GNOME extension's `dbusMenu.js` |
 
 The model leaves out a move that puts an item under itself or its own child. The library does not check for one, and the cycle makes `buildLayout` recurse until the stack overflows.
 
 ## Findings
 
-`PropsConverge` fails on the current code. The shortest path, in the code's words:
+None on the current code.
+
+The control run shows what `GetLayout` and `GetGroupProperties` writing their own reply prevents. With `LateReply` TRUE, the shortest path, in the code's words:
 
 1. The app calls `menu.AddChild(tray.MenuItemLabel("Ticks: 1"))`. The item sends `LayoutUpdated`.
 2. GNOME calls `GetLayout(0, -1)`, adds the new item from the reply, and calls `GetGroupProperties` for it.
@@ -125,17 +129,18 @@ The model leaves out a move that puts an item under itself or its own child. The
 5. godbus writes the `GetGroupProperties` reply with `Ticks: 1`.
 6. GNOME applies `Ticks: 2`, then the reply's `Ticks: 1`. The open menu shows `Ticks: 1` until the label changes again.
 
-A `GetLayout` reply can overtake a signal the same way and put back an old label on an item GNOME already shows. A run with `LateReply` FALSE passes, so the window between the method returning and godbus writing the reply is the whole cause.
+A `GetLayout` reply can overtake a signal the same way. In the code, step 4 waits for `Menu.m`, which `GetGroupProperties` holds until its reply is written, so the reply always comes first. `TestSetPropsBeforeUnwrittenReply` checks the same order on a real bus.
 
 ## Keep it in step with the code
 
-Sync commit: `8f73cef` (the model was last confirmed to describe the covered code at this commit)
+Sync commit: `9d7066e` (the model was last confirmed to describe the covered code at this commit)
 
 Covered code:
 
 - `menu.go`: `Menu.updateLayout`, `Menu.revision`, `Menu.lock`, `Menu.setChildren`
 - `menuitem.go`: `Menu.AddChild`, `MenuItem.AddChild`, `MenuItem.Remove`, `appendChild`, `MenuItem.MoveBefore`, `MenuItem.SetProps`, `MenuItem.emitPropertiesUpdated`, `MenuItem.setChildren`, `MenuItem.getParent`
-- `dbusmenu.go`: `GetLayout`, `buildLayout`, `buildChildren`, `GetGroupProperties`
+- `dbusmenu.go`: `GetLayout`, `buildLayout`, `buildChildren`, `GetGroupProperties`, `claimMenuReplies`, `flagReplyOwed`, `replyingMethods`, `reply`, `reply2`, `dbusmenu.send`
+- `item.go`: `New`, for the connection options
 - `go.mod`: the `github.com/godbus/dbus/v5` version, for `handleCall`
 
 The script prints the covered files that changed since the sync commit. After you confirm that the model still describes the code at a newer commit, move the sync commit forward to it. Never move it without that check.

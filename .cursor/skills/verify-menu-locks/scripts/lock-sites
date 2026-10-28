@@ -62,6 +62,7 @@ sub steps {
     }
     while ($rest =~ s/\b([\w.]+)\.lock\(\)//) { push @s, "lock() " . norm($1) }
     while ($rest =~ s/\bconn\.Emit\(//) { push @s, 'emit' }
+    while ($rest =~ s/\bconn\.Send\(//) { push @s, 'send' }
     while ($rest =~ s/\bh\(eventID//) { push @s, 'handler' }
     while ($rest =~ s/\bp\(&w\)//) { push @s, 'prop-callback' }
     # Calls into package functions and methods are steps too. Calls on an

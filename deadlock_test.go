@@ -51,7 +51,7 @@ func testConcurrentWithGetGroupProperties(t *testing.T, menu *Menu, write func()
 	})
 	wg.Go(func() {
 		for range n {
-			(*dbusmenu)(menu).GetGroupProperties(nil, nil)
+			(*dbusmenu)(menu).GetGroupProperties(dbus.Message{}, nil, nil)
 		}
 	})
 
