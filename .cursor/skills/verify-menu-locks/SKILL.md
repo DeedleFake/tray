@@ -130,7 +130,7 @@ None. The current code passes every property within the bounds above.
 
 ## Keep it in step with the code
 
-Sync commit: `e0283fa` (the model was last confirmed to describe the covered code at this commit)
+Sync commit: `8f73cef` (the model was last confirmed to describe the covered code at this commit)
 
 Covered code:
 

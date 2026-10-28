@@ -8,7 +8,7 @@ set -euo pipefail
 
 TLA_VERSION=1.8.0
 TLA_SHA256=fc6878c603f0fdc18b9fe3e5bf51860cb90ab5b1154e3c371660c036d6bdd63e
-GODBUS_VERSION=v5.2.3
+GODBUS_VERSION=v5.2.4
 
 # Model bounds. SKILL.md explains what each one covers.
 INIT_ITEMS=${INIT_ITEMS:-2}

@@ -129,7 +129,7 @@ A `GetLayout` reply can overtake a signal the same way and put back an old label
 
 ## Keep it in step with the code
 
-Sync commit: `e0283fa` (the model was last confirmed to describe the covered code at this commit)
+Sync commit: `8f73cef` (the model was last confirmed to describe the covered code at this commit)
 
 Covered code:
 
