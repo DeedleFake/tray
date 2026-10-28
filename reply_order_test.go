@@ -315,13 +315,13 @@ func callTimeout(obj dbus.BusObject, method string, args ...any) *dbus.Call {
 func TestMenuRepliesOnce(t *testing.T) {
 	outs := make(map[string]string)
 	for _, m := range introspect.Methods((*dbusmenu)(nil)) {
-		var sig string
+		var sig strings.Builder
 		for _, a := range m.Args {
 			if a.Direction == "out" {
-				sig += a.Type
+				sig.WriteString(a.Type)
 			}
 		}
-		outs[m.Name] = sig
+		outs[m.Name] = sig.String()
 	}
 
 	for name := range replyingMethods {
