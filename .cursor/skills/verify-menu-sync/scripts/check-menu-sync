@@ -6,7 +6,7 @@
 set -euo pipefail
 
 TLA_VERSION=1.8.0
-TLA_SHA256=d15655eeaff4b3f7b3d65c46b838bc0f35d131b2ef4b1e473689b62c98d4726f
+TLA_SHA256=fc6878c603f0fdc18b9fe3e5bf51860cb90ab5b1154e3c371660c036d6bdd63e
 
 # Model bounds. SKILL.md explains what each one covers.
 MAX_ITEMS=${MAX_ITEMS:-3}

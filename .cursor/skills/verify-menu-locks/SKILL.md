@@ -17,7 +17,7 @@ From the repo root:
 .cursor/skills/verify-menu-locks/scripts/check-menu-locks
 ```
 
-It needs Java 11 or newer, `perl`, and `curl`. Without a system Java, `mise exec java@temurin-21 -- <command>` works. The first run downloads `tla2tools.jar` 1.8.0 to `~/.cache/deedles-tray/` and checks its sha256. `verify-menu-sync` uses the same copy. Set `TLA2TOOLS_JAR` to use another copy. A run takes about 6 seconds. `TLC_WORKERS=2` limits the cores it uses. CI runs it in the `formal verification` job of `.github/workflows/test.yml`.
+It needs Java 11 or newer, `perl`, and `curl`. Without a system Java, `mise exec java@temurin-21 -- <command>` works. The first run downloads `tla2tools.jar` 1.8.0 to `~/.cache/deedles-tray/` and checks its sha256. 1.8.0 is a prerelease, and upstream sometimes replaces its jar. If a fresh download fails the check, compare its sha256 with the digest GitHub shows for the release asset, then update `TLA_SHA256` in both check scripts. `verify-menu-sync` uses the same copy. Set `TLA2TOOLS_JAR` to use another copy. A run takes about 6 seconds. `TLC_WORKERS=2` limits the cores it uses. CI runs it in the `formal verification` job of `.github/workflows/test.yml`.
 
 To check one property alone:
 
@@ -130,7 +130,7 @@ None. The current code passes every property within the bounds above.
 
 ## Keep it in step with the code
 
-Sync commit: `d5e8c87` (the model was last confirmed to describe the covered code at this commit)
+Sync commit: `e0283fa` (the model was last confirmed to describe the covered code at this commit)
 
 Covered code:
 

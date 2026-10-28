@@ -17,7 +17,7 @@ From the repo root:
 .cursor/skills/verify-menu-sync/scripts/check-menu-sync
 ```
 
-It needs Java 11 or newer, `perl`, and `curl`. Without a system Java, `mise exec java@temurin-21 -- <command>` works. The first run downloads `tla2tools.jar` 1.8.0 to `~/.cache/deedles-tray/` and checks its sha256. Set `TLA2TOOLS_JAR` to use another copy. A run takes about 5 seconds. `TLC_WORKERS=2` limits the cores it uses.
+It needs Java 11 or newer, `perl`, and `curl`. Without a system Java, `mise exec java@temurin-21 -- <command>` works. The first run downloads `tla2tools.jar` 1.8.0 to `~/.cache/deedles-tray/` and checks its sha256. 1.8.0 is a prerelease, and upstream sometimes replaces its jar. If a fresh download fails the check, compare its sha256 with the digest GitHub shows for the release asset, then update `TLA_SHA256` in both check scripts. Set `TLA2TOOLS_JAR` to use another copy. A run takes about 5 seconds. `TLC_WORKERS=2` limits the cores it uses.
 
 To check one property alone, ignoring the known findings list:
 
@@ -129,7 +129,7 @@ A `GetLayout` reply can overtake a signal the same way and put back an old label
 
 ## Keep it in step with the code
 
-Sync commit: `d5e8c87` (the model was last confirmed to describe the covered code at this commit)
+Sync commit: `e0283fa` (the model was last confirmed to describe the covered code at this commit)
 
 Covered code:
 
