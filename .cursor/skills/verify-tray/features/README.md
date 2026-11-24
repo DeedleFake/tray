@@ -38,8 +38,8 @@ Each feature file starts with an H1 title and one paragraph describing the host-
 
 ## Features
 
-- [Registration](./registration.md) covers bus name acquisition and `RegisterStatusNotifierItem` with the watcher.
+- [Registration](./registration.md) covers bus name acquisition, `RegisterStatusNotifierItem` with the watcher, and re-registration if the watcher restarts.
 - [Item properties](./item-properties.md) covers introspection and the StatusNotifierItem properties under both interface names.
-- [Menu layout](./menu-layout.md) covers `GetLayout`, `GetGroupProperties`, menu properties, and `AboutToShow`.
+- [Menu layout](./menu-layout.md) covers `GetLayout`, `GetGroupProperties`, menu properties, `AboutToShow`, and `AboutToShowGroup`.
 - [Menu events](./menu-events.md) covers clicking entries through `Event`, the resulting layout changes, and `LayoutUpdated`/`ItemsPropertiesUpdated` signals.
 - [Item activation](./item-activation.md) covers `Activate`, `SecondaryActivate`, `ContextMenu`, and `Scroll` on the icon.

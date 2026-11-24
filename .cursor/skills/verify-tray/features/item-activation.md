@@ -23,7 +23,7 @@ Preconditions:
 - **Middle click.** Run `control-tray secondary-activate 1 2`. Reply `()`. `item.log` gains `name=SecondaryActivate`.
 - **Right click.** Run `control-tray context-menu 1 2`. Reply `()`. `item.log` gains `name=ContextMenu`.
 - **Scroll.** Run `control-tray scroll 3 vertical`. Reply `()`. `item.log` gains `name=Scroll delta=3 orientation=vertical`.
-- **Proof.** `grep 'Activated\|item method' <item.log> > artifacts/item-activation/item-log.txt` before `cleanup`.
+- **Proof.** `grep 'Activated\|item method' <item.log> > .cursor/skills/verify-tray/artifacts/item-activation/item-log.txt` before `cleanup`.
 
 ## Gotchas
 

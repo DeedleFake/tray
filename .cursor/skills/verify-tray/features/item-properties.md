@@ -18,12 +18,13 @@ Preconditions:
 
 - `control-tray doctor` exits 0.
 
-- **Introspect.** Run `control-tray introspect > artifacts/item-properties/introspect.txt`. It lists `interface org.kde.StatusNotifierItem` and `interface org.freedesktop.StatusNotifierItem`, each with `Activate`, `ContextMenu`, `SecondaryActivate`, `Scroll`, and signals `NewTitle`, `NewIcon`, `NewToolTip`, `NewStatus`.
-- **Read props.** Run `control-tray item-props > artifacts/item-properties/kde.txt`. It contains `'Id': <'dev.deedles.tray.examples.simple'>`, `'Title': <'Simple Example'>`, `'ItemIsMenu': <true>`, `'Menu': <objectpath '/StatusNotifierMenu'>`, `'Status': <'Active'>`, `'ToolTip': <('', @a(iiay) [], 'Simple Example', 'A simple example of a tray icon.')>`, and `'IconPixmap': <[(32, 32, [byte ...`.
-- **Other interface.** Run `control-tray item-props org.freedesktop.StatusNotifierItem > artifacts/item-properties/freedesktop.txt`. Same values.
+- **Introspect.** Run `control-tray introspect > .cursor/skills/verify-tray/artifacts/item-properties/introspect.txt`. It lists `interface org.kde.StatusNotifierItem` and `interface org.freedesktop.StatusNotifierItem`, each with `Activate`, `ContextMenu`, `SecondaryActivate`, `Scroll`, and signals `NewTitle`, `NewIcon`, `NewAttentionIcon`, `NewOverlayIcon`, `NewToolTip`, `NewStatus`.
+- **Read props.** Run `control-tray item-props > .cursor/skills/verify-tray/artifacts/item-properties/kde.txt`. It contains `'Id': <'dev.deedles.tray.examples.simple'>`, `'Title': <'Simple Example'>`, `'ItemIsMenu': <true>`, `'Menu': <objectpath '/StatusNotifierMenu'>`, `'Status': <'Active'>`, `'ToolTip': <('', @a(iiay) [], 'Simple Example', 'A simple example of a tray icon.')>`, and `'IconPixmap': <[(32, 32, [byte ...`.
+- **Other interface.** Run `control-tray item-props org.freedesktop.StatusNotifierItem > .cursor/skills/verify-tray/artifacts/item-properties/freedesktop.txt`. Same values.
 - **One prop.** Run `control-tray prop Title`. Reply is `(<'Simple Example'>,)`.
 
 ## Gotchas
 
 - `IconPixmap` is several kilobytes of bytes. grep for `(32, 32,` rather than reading it.
+- `GetAll` also returns `WindowId`, `IconName`, `IconAccessibleDesc`, `OverlayIconName`, `OverlayIconPixmap`, `AttentionIconName`, `AttentionIconPixmap`, and `AttentionMovieName` at their defaults for this example.
 - The example does not change item properties after start, so `New*` signals are not observable with it.
