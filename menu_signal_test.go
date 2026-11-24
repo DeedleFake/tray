@@ -350,3 +350,163 @@ func TestSetPropsAfterParentRemoved(t *testing.T) {
 		t.Fatalf("label = %#v", child.props["label"])
 	}
 }
+
+func nodeIDs(menu *Menu) []int {
+	ids := make([]int, 0, len(menu.nodes))
+	for id := range menu.nodes {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+func TestRemoveDetachesDescendants(t *testing.T) {
+	menu, _ := newCaptureMenu(t)
+	parent, err := menu.AddChild(MenuItemLabel("parent"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := parent.AddChild(MenuItemLabel("child"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	grand, err := child.AddChild(MenuItemLabel("grand"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sibling, err := menu.AddChild(MenuItemLabel("sibling"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := parent.Remove(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, item := range []*MenuItem{parent, child, grand} {
+		if _, ok := menu.nodes[item.id]; ok {
+			t.Fatalf("item %d still in nodes after parent.Remove", item.id)
+		}
+		if item.getParent() != nil {
+			t.Fatalf("item %d still has parent %v", item.id, item.parent)
+		}
+	}
+	if menu.nodes[sibling.id] != sibling {
+		t.Fatal("sibling was removed")
+	}
+	if slices.Contains(menu.getChildren(), parent.id) {
+		t.Fatalf("root children = %v still list parent %d", menu.getChildren(), parent.id)
+	}
+}
+
+func TestSetPropsAfterRemovedRootChild(t *testing.T) {
+	menu, buf := newCaptureMenu(t)
+	item, err := menu.AddChild(MenuItemLabel("item"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := item.Remove(); err != nil {
+		t.Fatal(err)
+	}
+	mark := len(buf.waitQuiet())
+
+	err = item.SetProps(MenuItemLabel("renamed"))
+	want := fmt.Sprintf("menu item %d has no parent", item.id)
+	if err == nil || err.Error() != want {
+		t.Fatalf("SetProps err = %v, want %s", err, want)
+	}
+	if item.props["label"] != "item" {
+		t.Fatalf("label = %#v", item.props["label"])
+	}
+	if sigs := decodeSignals(signalBytes(buf, mark)); len(sigs) != 0 {
+		t.Fatalf("SetProps after Remove signals = %+v", sigs)
+	}
+}
+
+func TestAddChildOnRemovedItem(t *testing.T) {
+	menu, buf := newCaptureMenu(t)
+	item, err := menu.AddChild(MenuItemLabel("item"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := item.Remove(); err != nil {
+		t.Fatal(err)
+	}
+	before := nodeIDs(menu)
+	mark := len(buf.waitQuiet())
+
+	child, err := item.AddChild(MenuItemLabel("orphan"))
+	if child != nil || err != nil {
+		t.Fatalf("AddChild = (%v, %v), want (nil, nil)", child, err)
+	}
+	if got := nodeIDs(menu); !slices.Equal(got, before) {
+		t.Fatalf("nodes = %v, want %v", got, before)
+	}
+	if sigs := decodeSignals(signalBytes(buf, mark)); len(sigs) != 0 {
+		t.Fatalf("AddChild after Remove signals = %+v", sigs)
+	}
+}
+
+func TestAppendChildAndMoveBeforeAfterRemove(t *testing.T) {
+	menu, buf := newCaptureMenu(t)
+	a, err := menu.AddChild(MenuItemLabel("a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := menu.AddChild(MenuItemLabel("b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Remove(); err != nil {
+		t.Fatal(err)
+	}
+	beforeNodes := nodeIDs(menu)
+	beforeRoot := slices.Clone(menu.getChildren())
+	beforeB := slices.Clone(b.getChildren())
+	mark := len(buf.waitQuiet())
+
+	if err := menu.AppendChild(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.AppendChild(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.MoveBefore(b); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := nodeIDs(menu); !slices.Equal(got, beforeNodes) {
+		t.Fatalf("nodes = %v, want %v", got, beforeNodes)
+	}
+	if got := menu.getChildren(); !slices.Equal(got, beforeRoot) {
+		t.Fatalf("root children = %v, want %v", got, beforeRoot)
+	}
+	if got := b.getChildren(); !slices.Equal(got, beforeB) {
+		t.Fatalf("b children = %v, want %v", got, beforeB)
+	}
+	if slices.Contains(menu.getChildren(), a.id) || slices.Contains(b.getChildren(), a.id) {
+		t.Fatalf("removed id %d reinserted into a live children list", a.id)
+	}
+	if sigs := decodeSignals(signalBytes(buf, mark)); len(sigs) != 0 {
+		t.Fatalf("signals after AppendChild/MoveBefore on removed item = %+v", sigs)
+	}
+}
+
+func TestRemoveAlreadyRemovedIsNoop(t *testing.T) {
+	menu, buf := newCaptureMenu(t)
+	item, err := menu.AddChild(MenuItemLabel("item"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := item.Remove(); err != nil {
+		t.Fatal(err)
+	}
+	mark := len(buf.waitQuiet())
+	if err := item.Remove(); err != nil {
+		t.Fatal(err)
+	}
+	if sigs := decodeSignals(signalBytes(buf, mark)); len(sigs) != 0 {
+		t.Fatalf("second Remove signals = %+v", sigs)
+	}
+}
+
