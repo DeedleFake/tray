@@ -10,6 +10,12 @@
 (* knows. A GetLayout reply replaces its whole copy, properties included,  *)
 (* and asks GetGroupProperties for the items that are new to it.           *)
 (*                                                                         *)
+(* App calls are allowed on a held *MenuItem pointer after Remove, as the  *)
+(* Go API allows. Remove is not recursive, does not clear item.parent,     *)
+(* and AppendChild/MoveBefore may put a removed id back into a live        *)
+(* children list without putting it back into Menu.nodes, unless the       *)
+(* matching code-fact constant says the code now does otherwise.           *)
+(*                                                                         *)
 (* File references are to the repo root. "godbus" is                      *)
 (* github.com/godbus/dbus/v5 at the version in go.mod.                     *)
 (***************************************************************************)
@@ -28,7 +34,12 @@ CONSTANTS
   AppendSignalsLayout,     \* appendChild calls updateLayout
   MoveBeforeSignalsLayout, \* MoveBefore calls updateLayout
   SetPropsSignalsProps,    \* MenuItem.SetProps calls emitPropertiesUpdated
-  SetPropsSignalsLayout    \* MenuItem.SetProps calls updateLayout
+  SetPropsSignalsLayout,   \* MenuItem.SetProps calls updateLayout
+  RemoveLeavesOrphans,     \* MenuItem.Remove deletes only that item from Menu.nodes
+  RemovedKeepsParent,      \* getParent can return non-nil after Remove
+  ParentMustBeLive,        \* AddChild/AppendChild refuse a receiver not in Menu.nodes
+  RestoreRemovedToNodes,   \* AppendChild/MoveBefore put a removed child back in Menu.nodes
+  AboutToShowGroupRejectsRoot  \* AboutToShowGroup treats id 0 as missing from Menu.nodes
 
 Root == 0
 Ids == 1..MaxItems
@@ -62,6 +73,9 @@ InsertBefore(s, x, sib) ==
              j = Len(s) + 1 \/ s[j] = sib
   IN SubSeq(s, 1, i - 1) \o <<x>> \o SubSeq(s, i, Len(s))
 
+\* Ids the app still holds a *MenuItem pointer to, including removed ones.
+Created == 1..lastId
+
 \* Nodes reachable from n through children that are in Menu.nodes, as
 \* dbusmenu.buildChildren walks them.
 Below(k, n) ==
@@ -77,10 +91,23 @@ CD(k, n) == n = Root \/ Len(k[n]) > 0
 \* What GetLayout(0, -1) returns: dbusmenu.buildLayout copies every
 \* property with mapSlice(item.props, nil), whatever names were asked for.
 View(k, l) == [n \in Below(k, Root) |->
-                 [k |-> k[n], l |-> l[n], c |-> CD(k, n)]]
+                 [k |-> SelectSeq(k[n], LAMBDA c: c \in nodes),
+                  l |-> l[n], c |-> CD(k, n)]]
 
-\* A parent the methods accept: MenuItem.getParent is non-nil.
-HasParent(n) == par[n] = Root \/ par[n] \in nodes
+\* MenuItem.getParent is non-nil. When RemovedKeepsParent is FALSE, the
+\* code also treats an item missing from Menu.nodes as having no parent.
+HasParent(n) ==
+  /\ RemovedKeepsParent \/ n \in nodes
+  /\ par[n] = Root \/ par[n] \in nodes
+
+\* A parent the AddChild and AppendChild receivers accept.
+LiveDest(p) == p = Root \/ (p \in Created /\ (~ParentMustBeLive \/ p \in nodes))
+
+\* ids AboutToShowGroup reports in invalid. Root is never in Menu.nodes.
+GroupInvalid(ids) ==
+  IF AboutToShowGroupRejectsRoot
+  THEN {id \in Range(ids) : id \notin nodes}
+  ELSE {id \in Range(ids) : id # Root /\ id \notin nodes}
 
 LayoutMsg(r, p) == [t |-> "layout", rev |-> r, parent |-> p]
 LabelMsg(n, v) == [t |-> "props", id |-> n, f |-> "l", v |-> v]
@@ -121,12 +148,14 @@ Init ==
 (* The app. Each action is one Menu or MenuItem method, menuitem.go.        *)
 
 \* Menu.AddChild(MenuItemLabel(..)) for p = Root, MenuItem.AddChild for an
-\* item p: newItem, applyProps, setChildren, updateLayout(p), the child's
-\* emitPropertiesUpdated, then the parent's children-display.
+\* item p, including a held pointer to a removed item unless
+\* ParentMustBeLive. newItem, applyProps, setChildren, updateLayout(p),
+\* the child's emitPropertiesUpdated, then the parent's children-display.
 AddChild(p) ==
   LET c == lastId + 1
       k2 == [kids EXCEPT ![p] = Append(@, c)]
   IN /\ lastId < MaxItems
+     /\ LiveDest(p)
      /\ nodes' = nodes \cup {c}
      /\ par' = [par EXCEPT ![c] = p]
      /\ kids' = k2
@@ -137,9 +166,12 @@ AddChild(p) ==
                    \o <<LabelMsg(c, 1)>> \o CDIf(p, kids, k2)
      /\ UNCHANGED menuShut
 
-\* MenuItem.SetProps(MenuItemLabel(..)) with a new label.
+\* MenuItem.SetProps(MenuItemLabel(..)) with a new label. SetProps
+\* returns an error when getParent is nil, including after Remove once
+\* RemovedKeepsParent is FALSE. A held pointer to a removed root child
+\* still has parent 0, so the current code applies the change.
 SetLabel(n) ==
-  /\ n \in nodes /\ HasParent(n)
+  /\ n \in Created /\ HasParent(n)
   /\ label[n] < MaxLabel
   /\ label' = [label EXCEPT ![n] = @ + 1]
   /\ Relayout(SetPropsSignalsLayout)
@@ -148,39 +180,50 @@ SetLabel(n) ==
   /\ menuShut' = (menuShut \/ SetPropsSignalsLayout)
   /\ UNCHANGED <<nodes, kids, par, lastId>>
 
-\* MenuItem.Remove.
+\* MenuItem.Remove. When RemoveLeavesOrphans, only n is deleted from
+\* Menu.nodes and its descendants stay. item.parent is left as it is
+\* unless RemovedKeepsParent is FALSE.
 RemoveItem(n) ==
   LET p == par[n]
       k2 == [kids EXCEPT ![p] = Remove(@, n)]
-  IN /\ n \in nodes /\ HasParent(n)
-     /\ nodes' = nodes \ {n}
+      drop == IF RemoveLeavesOrphans THEN {n} ELSE Below(kids, n)
+  IN /\ n \in Created /\ HasParent(n)
+     /\ nodes' = nodes \ drop
      /\ kids' = k2
+     /\ par' = IF RemovedKeepsParent THEN par
+               ELSE [i \in Ids |-> IF i \in drop THEN Root ELSE par[i]]
+     \* par' = Root is only used when RemovedKeepsParent is FALSE, and
+     \* HasParent then requires n \in nodes, so getParent is still nil.
      /\ Relayout(RemoveSignalsLayout)
      /\ out' = out \o LayoutIf(RemoveSignalsLayout, <<p>>) \o CDIf(p, kids, k2)
-     /\ UNCHANGED <<par, label, lastId, menuShut>>
+     /\ UNCHANGED <<label, lastId, menuShut>>
 
 \* appendChild (Menu.AppendChild, MenuItem.AppendChild) when sib = 0, and
 \* MoveBefore(sib) otherwise. dst never sits under c: the library does not
-\* check that, and a cycle makes buildLayout recurse forever.
+\* check that, and a cycle makes buildLayout recurse forever. A held
+\* pointer to a removed child is accepted while getParent is non-nil. The
+\* current code then inserts the id into dst's children and does not put
+\* it back into Menu.nodes unless RestoreRemovedToNodes.
 Move(c, dst, sib, signals) ==
   LET src == par[c]
       k1 == [kids EXCEPT ![src] = Remove(@, c)]
       k2 == [k1 EXCEPT ![dst] = IF sib = 0 THEN Append(@, c)
                                 ELSE InsertBefore(@, c, sib)]
       ups == IF dst = src THEN <<dst>> ELSE <<dst, src>>
-  IN /\ c \in nodes /\ HasParent(c)
+  IN /\ c \in Created /\ HasParent(c)
+     /\ LiveDest(dst)
      /\ dst \notin Below(kids, c)
      /\ kids' = k2
      /\ par' = [par EXCEPT ![c] = dst]
+     /\ nodes' = IF RestoreRemovedToNodes THEN nodes \cup {c} ELSE nodes
      /\ Relayout(signals)
      /\ out' = out \o LayoutIf(signals, ups)
                    \o CDIf(src, kids, k1) \o CDIf(dst, k1, k2)
-     /\ UNCHANGED <<nodes, label, lastId, menuShut>>
+     /\ UNCHANGED <<label, lastId, menuShut>>
 
-AppendChild(c, dst) == /\ dst = Root \/ dst \in nodes
-                       /\ Move(c, dst, 0, AppendSignalsLayout)
+AppendChild(c, dst) == Move(c, dst, 0, AppendSignalsLayout)
 
-MoveBefore(c, sib) == /\ sib \in nodes /\ sib # c /\ HasParent(sib)
+MoveBefore(c, sib) == /\ sib \in Created /\ sib # c /\ HasParent(sib)
                       /\ Move(c, par[sib], sib, MoveBeforeSignalsLayout)
 
 \* One app call. Each is its own definition so TLC names the step.
@@ -188,11 +231,11 @@ AppCall == /\ ops < MaxOps
            /\ ops' = ops + 1
            /\ UNCHANGED <<calls, served, hv, want>>
 
-AppAddsItem == AppCall /\ \E p \in {Root} \cup nodes : AddChild(p)
-AppSetsLabel == AppCall /\ \E n \in nodes : SetLabel(n)
-AppRemovesItem == AppCall /\ \E n \in nodes : RemoveItem(n)
-AppAppendsChild == AppCall /\ \E c \in nodes, d \in {Root} \cup nodes : AppendChild(c, d)
-AppMovesBefore == AppCall /\ \E c, s \in nodes : MoveBefore(c, s)
+AppAddsItem == AppCall /\ \E p \in {Root} \cup Created : AddChild(p)
+AppSetsLabel == AppCall /\ \E n \in Created : SetLabel(n)
+AppRemovesItem == AppCall /\ \E n \in Created : RemoveItem(n)
+AppAppendsChild == AppCall /\ \E c \in Created, d \in {Root} \cup Created : AppendChild(c, d)
+AppMovesBefore == AppCall /\ \E c, s \in Created : MoveBefore(c, s)
 
 -----------------------------------------------------------------------------
 (* The item's side of GetLayout and GetGroupProperties, dbusmenu.go and    *)
@@ -264,6 +307,12 @@ Host ==
 ItemServes == \E c \in calls : Serve(c)
 ReplyWritten == \E r \in served : Reply(r)
 
+\* End state: no call is in flight, and no further app call is possible.
+Done ==
+  /\ out = <<>> /\ calls = {} /\ served = {}
+  /\ ops = MaxOps
+  /\ UNCHANGED vars
+
 Next ==
   \/ AppAddsItem
   \/ AppSetsLabel
@@ -273,6 +322,7 @@ Next ==
   \/ ItemServes
   \/ ReplyWritten
   \/ Host
+  \/ Done
 
 Spec == Init /\ [][Next]_vars
 
@@ -306,5 +356,19 @@ RevisionsIncrease ==
 
 \* A label change never sends LayoutUpdated.
 LabelChangeKeepsMenuOpen == ~menuShut
+
+\* Every id in Menu.nodes is reachable from the root through live children.
+NodesReachable == nodes \subseteq Below(kids, Root)
+
+\* Every id in a live children list is in Menu.nodes.
+NoDanglingChildIDs ==
+  \A n \in {Root} \cup nodes : Range(kids[n]) \subseteq nodes
+
+\* A removed item has getParent() == nil.
+RemovedHasNoParent == \A n \in Created \ nodes : ~HasParent(n)
+
+\* AboutToShowGroup([0]) checks the root like AboutToShow(0), and does
+\* not report 0 as invalid.
+AboutToShowGroupAcceptsRoot == Root \notin GroupInvalid(<<Root>>)
 
 =============================================================================
