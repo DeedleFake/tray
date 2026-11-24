@@ -18,7 +18,6 @@ MAX_RESTARTS=${MAX_RESTARTS:-1}
 # with it FALSE. Remove an entry once the code is fixed and the check passes
 # the property with the fact the code now has.
 KNOWN_FINDINGS=(
-  RegisteredSurvivesWatcherRestart:ReregistersOnWatcherRestart
 )
 
 PROPERTIES=(FailedNewClosesConn ExportBeforeRegister CloseTearsDown RegisteredSurvivesWatcherRestart NoDeadlock)
@@ -79,8 +78,8 @@ new_closes_conn_on_err() {
 }
 
 # TRUE when export() calls createMenu, then SetProps, then
-# RegisterStatusNotifierItem, and does not call RegisterStatusNotifierItem
-# before createMenu.
+# registerWithWatchers, registerWithWatchers calls RegisterStatusNotifierItem,
+# and export does not register before createMenu.
 register_after_export() {
   perl -0777 -e '
     local $/;
@@ -89,10 +88,14 @@ register_after_export() {
     $src =~ /func \(item \*Item\) export\(props \[\]ItemProp\) error \{((?:(?!\n\}\n).)*)\n\}/s
       or exit 1;
     my $body = $1;
-    exit 1 if $body =~ /RegisterStatusNotifierItem/ && $body =~ /RegisterStatusNotifierItem.*item\.createMenu\(/s;
+    exit 1 if $body =~ /RegisterStatusNotifierItem|registerWithWatchers/
+           && $body =~ /(?:RegisterStatusNotifierItem|registerWithWatchers).*item\.createMenu\(/s;
+    $src =~ /func \(item \*Item\) registerWithWatchers\(\) error \{((?:(?!\n\}\n).)*)\n\}/s
+      or exit 1;
+    exit 1 unless $1 =~ /RegisterStatusNotifierItem/;
     exit($body =~ /item\.createMenu\(\)/s
               && $body =~ /item\.createMenu\(\).*\Qitem.SetProps(props...)\E/s
-              && $body =~ /\Qitem.SetProps(props...)\E.*RegisterStatusNotifierItem/s ? 0 : 1);
+              && $body =~ /\Qitem.SetProps(props...)\E.*item\.registerWithWatchers\(\)/s ? 0 : 1);
   ' "$ROOT/item.go" && echo TRUE || echo FALSE
 }
 
@@ -128,8 +131,9 @@ assume "New connects with claimMenuReplies" "$(anchor item.go 'func New\(props \
 assume "RequestName failure falls back to the unique name and initProtoData returns nil" "$(anchor item.go 'func \(item \*Item\) initProtoData\(\) error \{'"$BODY"'item\.conn\.RequestName\(item\.name, 0\)'"$BODY"'item\.name = item\.conn\.Names\(\)\[0\]'"$BODY"'\n\treturn nil\n\}')"
 assume "export tries freedesktop then kde, first success wins, and fails only if both fail" "$(all \
   "$(anchor item.go 'spaces\s+= \[\.\.\.\]string\{"freedesktop", "kde"\}')" \
-  "$(anchor item.go 'func \(item \*Item\) export\(props \[\]ItemProp\) error \{'"$BODY"'for _, space := range spaces \{'"$BODY"'RegisterStatusNotifierItem'"$BODY"'if err == nil \{\s*break\s*\}')" \
-  "$(anchor item.go 'if len\(errs\) == len\(spaces\) \{\s*return errors\.Join\(errs\.\.\.\)')")"
+  "$(anchor item.go 'func \(item \*Item\) export\(props \[\]ItemProp\) error \{'"$BODY"'item\.registerWithWatchers\(\)')" \
+  "$(anchor item.go 'func \(item \*Item\) registerWithWatchers\(\) error \{'"$BODY"'for _, space := range spaces \{'"$BODY"'RegisterStatusNotifierItem'"$BODY"'if err == nil \{\s*return nil\s*\}')" \
+  "$(anchor item.go 'func \(item \*Item\) registerWithWatchers\(\) error \{'"$BODY"'return errors\.Join\(errs\.\.\.\)')")"
 assume "createMenu calls Menu.export" "$(anchor menu.go 'func \(item \*Item\) createMenu\(\) error \{'"$BODY"'item\.menu\.export\(\)')"
 
 echo "code facts (model constants):"
@@ -241,6 +245,12 @@ if [[ -z $ONLY ]]; then
     CloseTearsDown) echo "PASS  CloseTearsDown fails with CloseCallsConnClose FALSE, as it must" ;;
     none) echo "FAIL  CloseTearsDown passes with CloseCallsConnClose FALSE, so the model no longer sees a Close that leaves the connection open"; status=1 ;;
     *) echo "TOOL ERROR, see $OUT/CloseTearsDown-without-close.out"; status=2 ;;
+  esac
+  r=$(run RegisteredSurvivesWatcherRestart-without-reregister "ReregistersOnWatcherRestart=FALSE" RegisteredSurvivesWatcherRestart)
+  case $r in
+    RegisteredSurvivesWatcherRestart) echo "PASS  RegisteredSurvivesWatcherRestart fails with ReregistersOnWatcherRestart FALSE, as it must" ;;
+    none) echo "FAIL  RegisteredSurvivesWatcherRestart passes with ReregistersOnWatcherRestart FALSE, so the model no longer sees a missed re-register"; status=1 ;;
+    *) echo "TOOL ERROR, see $OUT/RegisteredSurvivesWatcherRestart-without-reregister.out"; status=2 ;;
   esac
 fi
 echo "model checked in $((SECONDS - start))s"
