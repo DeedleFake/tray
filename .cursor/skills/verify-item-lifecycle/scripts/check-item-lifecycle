@@ -1,0 +1,263 @@
+#!/usr/bin/env bash
+# Model-checks .cursor/skills/verify-item-lifecycle/model/ItemLifecycle.tla
+# with TLC. The model's code-fact constants are read from the code, so
+# removing a close, reordering RegisterStatusNotifierItem, or adding a
+# watcher re-register turns its constant and the check shows what changes.
+set -euo pipefail
+
+TLA_VERSION=1.8.0
+TLA_SHA256=fdffef247f563ef6edbfd44958d2a82db79e7564e07cb673262d896353fa6713
+
+# Model bounds. SKILL.md explains what each one covers.
+MAX_PROP_SETS=${MAX_PROP_SETS:-1}
+MAX_HOST_CALLS=${MAX_HOST_CALLS:-1}
+MAX_RESTARTS=${MAX_RESTARTS:-1}
+
+# Properties the current code is known to break, as PROPERTY:FIX_CONSTANT.
+# The property must hold with the FIX_CONSTANT TRUE and is expected to fail
+# with it FALSE. Remove an entry once the code is fixed and the check passes
+# the property with the fact the code now has.
+KNOWN_FINDINGS=(
+  FailedNewClosesConn:NewClosesConnOnErr
+  RegisteredSurvivesWatcherRestart:ReregistersOnWatcherRestart
+)
+
+PROPERTIES=(FailedNewClosesConn ExportBeforeRegister CloseTearsDown RegisteredSurvivesWatcherRestart NoDeadlock)
+
+ONLY=
+if [[ ${1:-} == --only ]]; then
+  ONLY=${2:?usage: check-item-lifecycle [--only PROPERTY]}
+fi
+
+ROOT=$(git rev-parse --show-toplevel)
+SKILL_DIR="$ROOT/.cursor/skills/verify-item-lifecycle"
+OUT="$SKILL_DIR/out"
+WORKERS=${TLC_WORKERS:-auto}
+
+die() { echo "error: $*" >&2; exit 2; }
+
+command -v java >/dev/null || die "java not found. Install a JDK 11 or newer (for example: mise exec java@temurin-21 -- $0)."
+command -v perl >/dev/null || die "perl not found."
+
+JAR=${TLA2TOOLS_JAR:-"${XDG_CACHE_HOME:-$HOME/.cache}/deedles-tray/tla2tools-$TLA_VERSION.jar"}
+if [[ ! -f "$JAR" ]]; then
+  mkdir -p "$(dirname "$JAR")"
+  echo "downloading tla2tools.jar $TLA_VERSION to $JAR"
+  curl -fsSL -o "$JAR.part" "https://github.com/tlaplus/tlaplus/releases/download/v$TLA_VERSION/tla2tools.jar"
+  mv "$JAR.part" "$JAR"
+fi
+if command -v sha256sum >/dev/null; then
+  sum=$(sha256sum "$JAR" | cut -d' ' -f1)
+else
+  sum=$(shasum -a 256 "$JAR" | cut -d' ' -f1)
+fi
+[[ "$sum" == "$TLA_SHA256" ]] || die "$JAR has sha256 $sum, expected $TLA_SHA256. Delete it and rerun."
+
+# anchor FILE REGEX: TRUE when REGEX (Perl, /s) matches FILE.
+anchor() {
+  perl -0777 -ne "exit(/$2/s ? 0 : 1)" "$ROOT/$1" && echo TRUE || echo FALSE
+}
+all() { local v; for v in "$@"; do [[ $v == TRUE ]] || { echo FALSE; return; }; done; echo TRUE; }
+
+BODY='(?:(?!\n\}\n).)*?'
+
+# Code facts: one regex per model constant. A FALSE means the code no longer
+# does it, or the code moved and the regex needs updating. SKILL.md says how
+# to tell.
+FLAG_NAMES=()
+flag() { FLAG_NAMES+=("$1"); printf -v "FLAG_$1" %s "$2"; }
+
+# TRUE when New defers a close-on-error after ConnectSessionBus, or both
+# post-connect error returns close the connection before returning.
+new_closes_conn_on_err() {
+  if [[ $(anchor item.go 'func New\(props \.\.\.ItemProp\) \(\*Item, error\) \{'"$BODY"'dbus\.ConnectSessionBus\(dbus\.WithIncomingInterceptor\(claimMenuReplies\)\)'"$BODY"'defer func\(\) \{'"$BODY"'if err != nil \{'"$BODY"'(?:item\.(?:conn\.)?Close|conn\.Close)\(\)') == TRUE ]]; then
+    echo TRUE
+    return
+  fi
+  all \
+    "$(anchor item.go 'err = item\.initProtoData\(\)\s*if err != nil \{\s*(?:[^\n]*\n\s*){0,6}(?:item\.(?:conn\.)?Close|conn\.Close)\(\)')" \
+    "$(anchor item.go 'err = item\.export\(props\)\s*if err != nil \{\s*(?:[^\n]*\n\s*){0,6}(?:item\.(?:conn\.)?Close|conn\.Close)\(\)')"
+}
+
+# TRUE when export() calls createMenu, then SetProps, then
+# RegisterStatusNotifierItem, and does not call RegisterStatusNotifierItem
+# before createMenu.
+register_after_export() {
+  perl -0777 -e '
+    local $/;
+    my $src = <>
+      or exit 1;
+    $src =~ /func \(item \*Item\) export\(props \[\]ItemProp\) error \{((?:(?!\n\}\n).)*)\n\}/s
+      or exit 1;
+    my $body = $1;
+    exit 1 if $body =~ /RegisterStatusNotifierItem/ && $body =~ /RegisterStatusNotifierItem.*item\.createMenu\(/s;
+    exit($body =~ /item\.createMenu\(\)/s
+              && $body =~ /item\.createMenu\(\).*\Qitem.SetProps(props...)\E/s
+              && $body =~ /\Qitem.SetProps(props...)\E.*RegisterStatusNotifierItem/s ? 0 : 1);
+  ' "$ROOT/item.go" && echo TRUE || echo FALSE
+}
+
+# TRUE when a watcher name-owner watch exists and RegisterStatusNotifierItem
+# is called from a method other than export.
+reregisters_on_watcher_restart() {
+  all \
+    "$(anchor item.go 'NameOwnerChanged|WatchName')" \
+    "$(perl -0777 -e '
+         local $/;
+         my $src = <> or exit 1;
+         while ($src =~ /func \(item \*Item\) (\w+)\(/g) {
+           my $name = $1;
+           next if $name eq "export";
+           my $rest = substr($src, pos($src));
+           my $body = ($rest =~ /^((?:(?!\nfunc |\n\}\n\n).)*)/s) ? $1 : $rest;
+           exit 0 if $body =~ /RegisterStatusNotifierItem/;
+         }
+         exit 1;
+       ' "$ROOT/item.go" && echo TRUE || echo FALSE)"
+}
+
+flag NewClosesConnOnErr "$(new_closes_conn_on_err)"
+flag RegisterAfterExport "$(register_after_export)"
+flag CloseCallsConnClose "$(anchor item.go 'func \(item \*Item\) Close\(\) error \{'"$BODY"'item\.conn\.Close\(\)')"
+flag ReregistersOnWatcherRestart "$(reregisters_on_watcher_restart)"
+
+# Assumptions the model's steps rest on. Each must hold, or the model no
+# longer describes the code.
+ASSUMPTIONS=()
+assume() { [[ $2 == TRUE ]] || ASSUMPTIONS+=("$1"); }
+assume "New connects with claimMenuReplies" "$(anchor item.go 'func New\(props \.\.\.ItemProp\) \(\*Item, error\) \{'"$BODY"'dbus\.ConnectSessionBus\(dbus\.WithIncomingInterceptor\(claimMenuReplies\)\)')"
+assume "RequestName failure falls back to the unique name and initProtoData returns nil" "$(anchor item.go 'func \(item \*Item\) initProtoData\(\) error \{'"$BODY"'item\.conn\.RequestName\(item\.name, 0\)'"$BODY"'item\.name = item\.conn\.Names\(\)\[0\]'"$BODY"'\n\treturn nil\n\}')"
+assume "export tries freedesktop then kde, first success wins, and fails only if both fail" "$(all \
+  "$(anchor item.go 'spaces\s+= \[\.\.\.\]string\{"freedesktop", "kde"\}')" \
+  "$(anchor item.go 'func \(item \*Item\) export\(props \[\]ItemProp\) error \{'"$BODY"'for _, space := range spaces \{'"$BODY"'RegisterStatusNotifierItem'"$BODY"'if err == nil \{\s*break\s*\}')" \
+  "$(anchor item.go 'if len\(errs\) == len\(spaces\) \{\s*return errors\.Join\(errs\.\.\.\)')")"
+assume "createMenu calls Menu.export" "$(anchor menu.go 'func \(item \*Item\) createMenu\(\) error \{'"$BODY"'item\.menu\.export\(\)')"
+
+echo "code facts (model constants):"
+for k in "${FLAG_NAMES[@]}"; do
+  v="FLAG_$k"; printf '  %-32s %s\n' "$k" "${!v}"
+done
+if (( ${#ASSUMPTIONS[@]} > 0 )); then
+  echo "MODEL STALE: these steps no longer match the code, so a result would not describe it:"
+  printf '  %s\n' "${ASSUMPTIONS[@]}"
+  exit 1
+fi
+
+rm -rf "$OUT" && mkdir -p "$OUT"
+cp "$SKILL_DIR/model/ItemLifecycle.tla" "$OUT/"
+
+# write_cfg NAME OVERRIDES INVARIANTS...
+# OVERRIDES is a comma-separated list of CONSTANT=VALUE, or empty.
+write_cfg() {
+  local name=$1 overrides=$2; shift 2
+  {
+    echo "SPECIFICATION Spec"
+    echo "CONSTANTS"
+    echo "  MaxPropSets = $MAX_PROP_SETS"
+    echo "  MaxHostCalls = $MAX_HOST_CALLS"
+    echo "  MaxRestarts = $MAX_RESTARTS"
+    declare -A ov=()
+    if [[ -n $overrides ]]; then
+      local pair
+      IFS=',' read -ra pairs <<<"$overrides"
+      for pair in "${pairs[@]}"; do
+        ov[${pair%%=*}]=${pair#*=}
+      done
+    fi
+    local k v
+    for k in "${FLAG_NAMES[@]}"; do
+      v="FLAG_$k"
+      echo "  $k = ${ov[$k]:-${!v}}"
+    done
+    echo "CHECK_DEADLOCK FALSE"
+    echo "INVARIANT TypeOK $*"
+  } >"$OUT/$name.cfg"
+}
+
+# run NAME OVERRIDES INVARIANTS...: prints the violated invariant,
+# "none", or "tool-error".
+run() {
+  local name=$1; shift
+  write_cfg "$name" "$@"
+  (cd "$OUT" && java -XX:+UseParallelGC -cp "$JAR" tlc2.TLC -config "$name.cfg" \
+    -workers "$WORKERS" -metadir "$OUT/meta-$name" -nowarning ItemLifecycle.tla) >"$OUT/$name.out" 2>&1 || true
+  if grep -q '^Model checking completed. No error has been found.' "$OUT/$name.out"; then
+    echo none
+  elif v=$(grep -oE '^Error: Invariant [A-Za-z]+ is violated' "$OUT/$name.out" | awk '{print $3}'); [[ -n $v ]]; then
+    echo "$v"
+  else
+    echo tool-error
+  fi
+}
+
+if [[ -n $ONLY ]]; then KNOWN_FINDINGS=(); fi
+is_known() { local x; for x in "${KNOWN_FINDINGS[@]}"; do [[ ${x%%:*} == "$1" ]] && return 0; done; return 1; }
+
+expected=()
+for p in "${PROPERTIES[@]}"; do is_known "$p" || expected+=("$p"); done
+[[ -n $ONLY ]] && expected=("$ONLY")
+
+status=0
+start=$SECONDS
+result=$(run main "" "${expected[@]}")
+case $result in
+  none) echo "PASS  ${expected[*]}" ;;
+  tool-error) echo "TOOL ERROR, see $OUT/main.out"; status=2 ;;
+  *) echo "FAIL  $result (counterexample: $OUT/main.out)"; status=1 ;;
+esac
+
+for entry in "${KNOWN_FINDINGS[@]}"; do
+  f=${entry%%:*} bound=${entry#*:}
+  r=$(run "$f-with-$bound" "$bound=TRUE" "$f")
+  case $r in
+    none) echo "PASS  $f with $bound TRUE" ;;
+    tool-error) echo "TOOL ERROR, see $OUT/$f-with-$bound.out"; status=2 ;;
+    *) echo "FAIL  $r with $bound TRUE (counterexample: $OUT/$f-with-$bound.out)"; [[ $status == 0 ]] && status=1 ;;
+  esac
+  r=$(run "$f" "$bound=FALSE" "$f")
+  case $r in
+    "$f") echo "KNOWN FINDING still present: $f with $bound FALSE (counterexample: $OUT/$f.out)" ;;
+    none) echo "FIXED? $f now passes with $bound FALSE. Confirm the fix with a test, then remove it from KNOWN_FINDINGS and the findings in SKILL.md."; status=1 ;;
+    tool-error) echo "TOOL ERROR, see $OUT/$f.out"; status=2 ;;
+    *) echo "FAIL  $r while checking $f (counterexample: $OUT/$f.out)"; [[ $status == 0 ]] && status=1 ;;
+  esac
+  v="FLAG_$bound"
+  if [[ ${!v} == TRUE ]]; then
+    echo "FIXED? code fact $bound is TRUE, so $f now belongs in the main run. Confirm the fix with a test, then remove it from KNOWN_FINDINGS and the findings in SKILL.md."
+    status=1
+  fi
+done
+
+# The model must still find the breaks if the guarding facts flip, or a
+# pass above proves nothing about them.
+if [[ -z $ONLY ]]; then
+  r=$(run ExportBeforeRegister-without-order "RegisterAfterExport=FALSE" ExportBeforeRegister)
+  case $r in
+    ExportBeforeRegister) echo "PASS  ExportBeforeRegister fails with RegisterAfterExport FALSE, as it must" ;;
+    none) echo "FAIL  ExportBeforeRegister passes with RegisterAfterExport FALSE, so the model no longer sees the reorder"; status=1 ;;
+    *) echo "TOOL ERROR, see $OUT/ExportBeforeRegister-without-order.out"; status=2 ;;
+  esac
+  r=$(run CloseTearsDown-without-close "CloseCallsConnClose=FALSE" CloseTearsDown)
+  case $r in
+    CloseTearsDown) echo "PASS  CloseTearsDown fails with CloseCallsConnClose FALSE, as it must" ;;
+    none) echo "FAIL  CloseTearsDown passes with CloseCallsConnClose FALSE, so the model no longer sees a Close that leaves the connection open"; status=1 ;;
+    *) echo "TOOL ERROR, see $OUT/CloseTearsDown-without-close.out"; status=2 ;;
+  esac
+fi
+echo "model checked in $((SECONDS - start))s"
+
+# Coverage drift: covered code changed since the sync commit in SKILL.md.
+sync=$(sed -n 's/^Sync commit: `\([0-9a-f]*\)`.*/\1/p' "$SKILL_DIR/SKILL.md")
+covered=$(sed -n 's/^- `\([^`]*\)`:.*/\1/p' "$SKILL_DIR/SKILL.md" | sort -u)
+if [[ -n $sync ]] && git -C "$ROOT" cat-file -e "$sync^{commit}" 2>/dev/null; then
+  # shellcheck disable=SC2086
+  drift=$(cd "$ROOT" && git diff --name-only "$sync" -- $covered)
+  if [[ -n $drift ]]; then
+    echo "covered code changed since sync commit $sync, so recheck the model against it:"
+    echo "$drift" | sed 's/^/  /'
+  fi
+else
+  echo "warning: sync commit '$sync' from SKILL.md is not in this clone; cannot check coverage drift."
+fi
+
+exit $status
