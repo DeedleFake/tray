@@ -313,10 +313,12 @@ func (menu *dbusmenu) AboutToShowGroup(ids []int) (updates []menuUpdate, invalid
 	defer menu.m.RUnlock()
 
 	for _, id := range ids {
-		item := menu.nodes[id]
-		if item == nil {
-			invalid = append(invalid, id)
-			continue
+		if id != 0 {
+			item := menu.nodes[id]
+			if item == nil {
+				invalid = append(invalid, id)
+				continue
+			}
 		}
 
 		updates = append(updates, menuUpdate{

@@ -510,3 +510,29 @@ func TestRemoveAlreadyRemovedIsNoop(t *testing.T) {
 	}
 }
 
+func TestAboutToShowGroupAcceptsRoot(t *testing.T) {
+	menu, _ := newCaptureMenu(t)
+	menu.dirty.Add(0)
+
+	updates, invalid, derr := (*dbusmenu)(menu).AboutToShowGroup([]int{0})
+	if derr != nil {
+		t.Fatal(derr)
+	}
+	if len(invalid) != 0 {
+		t.Fatalf("invalid = %v, want none", invalid)
+	}
+	if len(updates) != 1 || updates[0].ID != 0 || !updates[0].NeedUpdate {
+		t.Fatalf("updates = %+v, want root NeedUpdate", updates)
+	}
+
+	updates, invalid, derr = (*dbusmenu)(menu).AboutToShowGroup([]int{0, 99})
+	if derr != nil {
+		t.Fatal(derr)
+	}
+	if !slices.Equal(invalid, []int{99}) {
+		t.Fatalf("invalid = %v, want [99]", invalid)
+	}
+	if len(updates) != 1 || updates[0].ID != 0 || !updates[0].NeedUpdate {
+		t.Fatalf("updates = %+v, want root NeedUpdate", updates)
+	}
+}
