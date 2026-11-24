@@ -3,9 +3,9 @@
 # session bus with a StatusNotifierWatcher stand-in.
 #
 # Commands: launch, doctor, env, introspect, item-props, menu-props,
-# layout, group-props, prop, event, about-to-show, activate,
-# secondary-activate, context-menu, scroll, monitor, monitor-stop,
-# logs, bus, cleanup.
+# layout, group-props, prop, event, about-to-show, about-to-show-group,
+# activate, secondary-activate, context-menu, scroll, monitor,
+# monitor-stop, restart-watcher, logs, bus, cleanup.
 #
 # Cleanup kills only the process groups recorded at launch. It never
 # kills by name, so a user's own tray apps and session bus are untouched.
@@ -74,7 +74,7 @@ cmd_launch() {
 		# shellcheck disable=SC1091
 		(source "$CURRENT/state"; alive "$BUS_PID") && die "a verify run is already live ($(readlink -f "$CURRENT")); run cleanup first"
 	fi
-	for t in go dbus-daemon gdbus setsid; do command -v $t >/dev/null || die "missing $t"; done
+	for t in go dbus-daemon gdbus setsid stdbuf; do command -v $t >/dev/null || die "missing $t"; done
 
 	local id; id="$(date +%Y%m%d-%H%M%S)-$$"
 	RUN="$RUNS/$id"
@@ -174,6 +174,48 @@ cmd_about_to_show() { load; need_item; menu AboutToShow "$1"; }
 
 sni() { load; need_item; g call -e -d "$ITEM" -o $ITEM_PATH -m "org.kde.StatusNotifierItem.$1" "${@:2}"; }
 
+
+cmd_about_to_show_group() { load; need_item; menu AboutToShowGroup "[${1:-0}]"; }
+
+cmd_restart_watcher() {
+	load
+	alive "$ITEM_PID" || die "item process is not alive"
+	[[ -x $RUN/watcher ]] || die "watcher binary missing in $RUN"
+
+	if alive "$WATCHER_PID"; then
+		kill -TERM -- -"$WATCHER_PID" 2>/dev/null || kill -TERM "$WATCHER_PID" 2>/dev/null || true
+		local end=$((SECONDS + 10))
+		while alive "$WATCHER_PID" && ((SECONDS < end)); do sleep 0.1; done
+		if alive "$WATCHER_PID"; then
+			kill -KILL -- -"$WATCHER_PID" 2>/dev/null || kill -KILL "$WATCHER_PID" 2>/dev/null || true
+			sleep 0.2
+		fi
+		alive "$WATCHER_PID" && die "old watcher $WATCHER_PID did not exit"
+	fi
+
+	local before=0
+	[[ -f $RUN/watcher.log ]] && before=$(wc -c < "$RUN/watcher.log")
+
+	setsid "$RUN/watcher" >>"$RUN/watcher.log" 2>&1 &
+	WATCHER_PID=$!
+	if grep -q '^WATCHER_PID=' "$RUN/state"; then
+		sed -i "s/^WATCHER_PID=.*/WATCHER_PID=$WATCHER_PID/" "$RUN/state"
+	else
+		echo "WATCHER_PID=$WATCHER_PID" >>"$RUN/state"
+	fi
+
+	# shellcheck disable=SC2310
+	if ! wait_for 10 bash -c "tail -c +$((before + 1)) \"$RUN/watcher.log\" | grep -q 'watcher ready'"; then
+		die "watcher not ready after restart; see $RUN/watcher.log"
+	fi
+	if ! wait_for 30 bash -c "tail -c +$((before + 1)) \"$RUN/watcher.log\" | grep -q RegisterStatusNotifierItem"; then
+		echo "item did not re-register after watcher restart; see $RUN/watcher.log and $RUN/item.log" >&2
+		tail -n 20 "$RUN/item.log" >&2 || true
+		exit 1
+	fi
+	echo "restarted: watcher pid=$WATCHER_PID"
+}
+
 cmd_monitor() {
 	load
 	local path=""
@@ -225,7 +267,7 @@ cmd_cleanup() {
 
 case ${1:-} in
 launch | doctor | env | introspect | logs | cleanup | monitor | layout | event | prop | bus) c=$1; shift; "cmd_$c" "$@" ;;
-item-props | menu-props | group-props | about-to-show | monitor-stop) c=${1//-/_}; shift; "cmd_$c" "$@" ;;
+item-props | menu-props | group-props | about-to-show | about-to-show-group | monitor-stop | restart-watcher) c=${1//-/_}; shift; "cmd_$c" "$@" ;;
 activate) shift; sni Activate "${1:-0}" "${2:-0}" ;;
 secondary-activate) shift; sni SecondaryActivate "${1:-0}" "${2:-0}" ;;
 context-menu) shift; sni ContextMenu "${1:-0}" "${2:-0}" ;;

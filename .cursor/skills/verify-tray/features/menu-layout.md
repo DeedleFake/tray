@@ -8,12 +8,13 @@ A tray host reads the menu tree and per-entry properties from `com.canonical.dbu
 - `layout-sub` returns one submenu by parent id and depth.
 - `layout-group` returns properties for all or selected ids.
 - `layout-menu-props` returns `Version` 3, `TextDirection`, `Status`, `IconThemePath`.
-- `layout-about-to-show` answers `AboutToShow` for a submenu.
+- `layout-about-to-show` answers `AboutToShow` for a submenu or the root (`0`).
+- `layout-about-to-show-group` answers `AboutToShowGroup` for one or more ids, including root id `0`, and lists unknown ids as invalid.
 
 ## How to get to it (user POV)
 
 - The host calls `GetLayout(0, -1, [])` when the icon is clicked or after `LayoutUpdated`.
-- It calls `GetGroupProperties` and `AboutToShow` when opening a submenu.
+- It calls `GetGroupProperties`, `AboutToShow`, and `AboutToShowGroup` when opening a submenu or the root menu.
 
 ## Driving it with control-tray
 
@@ -21,15 +22,16 @@ Preconditions:
 
 - `control-tray doctor` exits 0, five seconds after `launch`.
 
-- **Full tree.** Run `control-tray layout > artifacts/menu-layout/layout.txt`. Root children are `1 Edit` with `'children-display': <'submenu'>` containing `2 Add` (`'enabled': <false>`) and `3 Remove`, then `4` `'type': <'separator'>`, `5 Print`, `6 Exit`, `7` with a `Ticks:` label, and `8 Check` with `'toggle-type': <'checkmark'>`. The `Ticks` count and `Check` toggle state change about once a second.
+- **Full tree.** Run `control-tray layout > .cursor/skills/verify-tray/artifacts/menu-layout/layout.txt`. Root children are `1 Edit` with `'children-display': <'submenu'>` containing `2 Add` (`'enabled': <false>`) and `3 Remove`, then `4` `'type': <'separator'>`, `5 Print`, `6 Exit`, `7` with a `Ticks:` label, and `8 Check` with `'toggle-type': <'checkmark'>`. The `Ticks` count and `Check` toggle state change about once a second.
 - **Submenu.** Run `control-tray layout 1 1`. The reply root is id `1` with children `2` and `3` only.
-- **Group props.** Run `control-tray group-props > artifacts/menu-layout/group.txt`. It lists ids 1 through 8 with the labels above. `7` and `8` follow the live `Ticks` and `Check` values. Run `control-tray group-props 2,6`. Only ids 2 and 6 come back.
+- **Group props.** Run `control-tray group-props > .cursor/skills/verify-tray/artifacts/menu-layout/group.txt`. It lists ids 1 through 8 with the labels above. `7` and `8` follow the live `Ticks` and `Check` values. Run `control-tray group-props 2,6`. Only ids 2 and 6 come back.
 - **Menu props.** Run `control-tray menu-props`. Reply is `{'Status': <'normal'>, 'IconThemePath': <@as []>, 'Version': <3>, 'TextDirection': <'ltr'>}` in any order.
-- **About to show.** Run `control-tray about-to-show 1`. Reply is `(false,)` right after a `layout` read.
-- **Proof.** Also save `control-tray introspect /StatusNotifierMenu` to `artifacts/menu-layout/introspect.txt`.
+- **About to show.** Run `control-tray about-to-show 1`. Reply is `(false,)` right after a `layout` read. Run `control-tray about-to-show 0`. Reply is also `(false,)`.
+- **About to show group.** Right after a `layout` read, run `control-tray about-to-show-group`. Reply is `([(0, false)], @ai [])`. Run `control-tray about-to-show-group 0,1`. Reply is `([(0, false), (1, false)], @ai [])`. Run `control-tray about-to-show-group 999`. Reply is `(@a(ib) [], [999])`.
+- **Proof.** Also save `control-tray introspect /StatusNotifierMenu` to `.cursor/skills/verify-tray/artifacts/menu-layout/introspect.txt`.
 
 ## Gotchas
 
 - `group-props` with no ids returns entries in map order, not id order.
-- `GetLayout` clears the dirty flag `AboutToShow` reports, so `about-to-show` after `layout` is always `false`. To see `true`, mutate the menu (see menu-events) and call `about-to-show` on the parent before any `layout`.
+- `GetLayout` clears the dirty flag `AboutToShow` and `AboutToShowGroup` report, so both return `false` after `layout`. To see `true`, mutate the menu (see menu-events) or skip `layout`, then call the method on the parent before any `layout`.
 - `layout` depth is passed as `int32`; a bare `-1` would be parsed by `gdbus` as a flag. Use the helper.

@@ -19,7 +19,7 @@ Read `features/README.md` before a proof. Drive every entry point the matching f
 
 `launch` starts its own `dbus-daemon --session` on a socket under `runs/<id>/bus`. Every helper command talks only to that bus. The user's session bus, tray host, and tray apps are never touched.
 
-`tray.New` fails unless a StatusNotifierWatcher answers `RegisterStatusNotifierItem`. On the private bus that is `scripts/watcher`, a stand-in that owns `org.kde.StatusNotifierWatcher` and `org.freedesktop.StatusNotifierWatcher`, logs each registration, and publishes `RegisteredStatusNotifierItems`. It is verification scaffolding, not part of the package. It does not unregister items that vanish.
+`tray.New` fails unless a StatusNotifierWatcher answers `RegisterStatusNotifierItem`. On the private bus that is `scripts/watcher`, a stand-in that owns `org.kde.StatusNotifierWatcher` and `org.freedesktop.StatusNotifierWatcher`, logs each registration, and publishes `RegisteredStatusNotifierItems`. It is verification scaffolding, not part of the package. It does not unregister items that vanish. `restart-watcher` stops that process and starts a new one on the same bus so the item can re-register when the names return. The stand-in claims both names in sequence, so a restart may log two `RegisterStatusNotifierItem` calls and list the same service twice.
 
 Only one verify run at a time per checkout. `launch` refuses while `runs/current` points to a live bus.
 
@@ -66,12 +66,14 @@ Every command resolves the item's bus name through the watcher and prints the ra
 | Read menu tree | `$CTRL layout [parentID] [depth]` (default `0 -1`) | `GetLayout` |
 | Read item props in bulk | `$CTRL group-props [1,2,3]` (empty = all) | `GetGroupProperties` |
 | Open a submenu | `$CTRL about-to-show <id>` | `AboutToShow` |
+| Check one or more menus | `$CTRL about-to-show-group [0,1]` (default `0`) | `AboutToShowGroup` |
 | Click a menu entry | `$CTRL event <id> [clicked\|hovered\|opened\|closed]` | `Event` |
 | Left-click icon | `$CTRL activate <x> <y>` | `Activate` |
 | Middle-click icon | `$CTRL secondary-activate <x> <y>` | `SecondaryActivate` |
 | Right-click icon | `$CTRL context-menu <x> <y>` | `ContextMenu` |
 | Scroll on icon | `$CTRL scroll <delta> <vertical\|horizontal>` | `Scroll` |
 | Record signals | `$CTRL monitor --path <file>` ... `$CTRL monitor-stop` | `gdbus monitor` on the item's name |
+| Restart the watcher | `$CTRL restart-watcher` | new stand-in; item re-registers on `NameOwnerChanged` |
 | Anything else | `$CTRL bus -- <cmd>` (runs `<cmd>` with the private bus address) | |
 
 `$CTRL logs` prints the paths of `item.log` (the example's stdout plus `TRAY_DEBUG` logs of every method the item served) and `watcher.log`.
@@ -100,5 +102,5 @@ Kills only the process groups recorded in `runs/<id>/state` (bus, watcher, examp
 
 ## Helpers
 
-- `scripts/control-tray` (bash, executable): every command above.
+- `scripts/control-tray` (bash, executable): every command above, including `restart-watcher` and `about-to-show-group`.
 - `scripts/watcher/main.go`: the StatusNotifierWatcher stand-in. `launch` builds it; you never run it directly. Go skips dot-directories in `./...`, so it is not linted or tested by CI.
