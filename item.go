@@ -9,6 +9,7 @@ import (
 	"image/draw"
 	"os"
 	"slices"
+	"sync"
 	"sync/atomic"
 
 	"deedles.dev/tray/internal/set"
@@ -63,6 +64,12 @@ type Item struct {
 	menu    *Menu
 	name    string
 	handler atomic.Pointer[Handler]
+
+	watcherSig  chan *dbus.Signal
+	watcherDone chan struct{}
+	watcherWG   sync.WaitGroup
+	closeOnce   sync.Once
+	closeErr    error
 }
 
 // New creates a new Item configured with the given props. It is
@@ -93,6 +100,11 @@ func New(props ...ItemProp) (*Item, error) {
 	err = item.export(props)
 	if err != nil {
 		return nil, fmt.Errorf("export StatusNotifierItem: %w", err)
+	}
+
+	err = item.watchWatcher()
+	if err != nil {
+		return nil, fmt.Errorf("watch StatusNotifierWatcher: %w", err)
 	}
 
 	return &item, nil
@@ -146,21 +158,90 @@ func (item *Item) export(props []ItemProp) error {
 		return fmt.Errorf("set properties: %w", err)
 	}
 
+	return item.registerWithWatchers()
+}
+
+func watcherName(space string) string {
+	return fmt.Sprintf("org.%v.StatusNotifierWatcher", space)
+}
+
+func watcherOwnerMatch(space string) []dbus.MatchOption {
+	return []dbus.MatchOption{
+		dbus.WithMatchSender("org.freedesktop.DBus"),
+		dbus.WithMatchInterface("org.freedesktop.DBus"),
+		dbus.WithMatchMember("NameOwnerChanged"),
+		dbus.WithMatchArg(0, watcherName(space)),
+	}
+}
+
+func (item *Item) registerWithWatchers() error {
 	var errs []error
 	for _, space := range spaces {
-		watcher := fmt.Sprintf("org.%v.StatusNotifierWatcher", space)
+		watcher := watcherName(space)
 		method := fmt.Sprintf("%v.RegisterStatusNotifierItem", watcher)
-		err = dbusCall(item.conn.Object(watcher, "/StatusNotifierWatcher"), method, 0, item.name).Store()
+		err := dbusCall(item.conn.Object(watcher, "/StatusNotifierWatcher"), method, 0, item.name).Store()
 		if err == nil {
-			break
+			return nil
 		}
 		errs = append(errs, fmt.Errorf("register StatusNotifierItem with %v: %w", watcher, err))
 	}
-	if len(errs) == len(spaces) {
-		return errors.Join(errs...)
-	}
+	return errors.Join(errs...)
+}
 
+func (item *Item) watchWatcher() error {
+	ch := make(chan *dbus.Signal, 8)
+	item.conn.Signal(ch)
+	for _, space := range spaces {
+		if err := item.conn.AddMatchSignal(watcherOwnerMatch(space)...); err != nil {
+			item.conn.RemoveSignal(ch)
+			return fmt.Errorf("watch %v: %w", watcherName(space), err)
+		}
+	}
+	item.watcherSig = ch
+	item.watcherDone = make(chan struct{})
+	item.watcherWG.Add(1)
+	go item.serveWatcherWatch()
 	return nil
+}
+
+func (item *Item) serveWatcherWatch() {
+	defer item.watcherWG.Done()
+	for {
+		select {
+		case <-item.watcherDone:
+			return
+		case sig, ok := <-item.watcherSig:
+			if !ok {
+				return
+			}
+			item.onWatcherNameOwnerChanged(sig)
+		}
+	}
+}
+
+func (item *Item) onWatcherNameOwnerChanged(sig *dbus.Signal) {
+	if sig.Name != "org.freedesktop.DBus.NameOwnerChanged" || len(sig.Body) != 3 {
+		return
+	}
+	name, _ := sig.Body[0].(string)
+	newOwner, _ := sig.Body[2].(string)
+	if newOwner == "" {
+		return
+	}
+	for _, space := range spaces {
+		if name != watcherName(space) {
+			continue
+		}
+		select {
+		case <-item.watcherDone:
+			return
+		default:
+		}
+		if err := item.registerWithWatchers(); err != nil {
+			logger.Warn("re-register StatusNotifierItem failed", "name", name, "err", err)
+		}
+		return
+	}
 }
 
 func (item *Item) exportProps() error {
@@ -203,11 +284,24 @@ func (item *Item) exportIntrospect() error {
 }
 
 // Close closes the underlying D-Bus connection, removing the item
-// from the tray. The behavior of any calls to any methods either on
-// this Item or on any associated Menu or MenuItem instances after
-// calling this is undefined.
+// from the tray. It is safe to call Close more than once. The
+// behavior of any other calls to any methods either on this Item or
+// on any associated Menu or MenuItem instances after calling this is
+// undefined.
 func (item *Item) Close() error {
-	return item.conn.Close()
+	item.closeOnce.Do(func() {
+		if item.watcherDone != nil {
+			close(item.watcherDone)
+		}
+		if item.conn != nil {
+			if item.watcherSig != nil {
+				item.conn.RemoveSignal(item.watcherSig)
+			}
+			item.closeErr = item.conn.Close()
+		}
+		item.watcherWG.Wait()
+	})
+	return item.closeErr
 }
 
 func (item *Item) emit(name string) error {

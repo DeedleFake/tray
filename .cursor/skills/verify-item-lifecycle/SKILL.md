@@ -1,11 +1,11 @@
 ---
 name: verify-item-lifecycle
-description: Model-check that deedles.dev/tray's Item lifecycle closes the bus connection when New fails after connecting, never calls RegisterStatusNotifierItem before the item and menu are exported, tears the connection down on Close, and stays registered if the StatusNotifierWatcher disappears and comes back, using a TLA+ model whose code facts are read from item.go, menu.go, and statusnotifieritem.go. Use when a change touches New, initProtoData, export, exportProps, exportIntrospect, createMenu, Menu.export, SetProps, emit, Close, the StatusNotifierItem host methods, watcher registration, or the connection options in New, or when running /verify-item-lifecycle.
+description: Model-check that deedles.dev/tray's Item lifecycle closes the bus connection when New fails after connecting, never calls RegisterStatusNotifierItem before the item and menu are exported, tears the connection down on Close, and stays registered if the StatusNotifierWatcher disappears and comes back, using a TLA+ model whose code facts are read from item.go, menu.go, and statusnotifieritem.go. Use when a change touches New, initProtoData, export, exportProps, exportIntrospect, createMenu, Menu.export, SetProps, emit, Close, the StatusNotifierItem host methods, watcher registration, watchWatcher, or the connection options in New, or when running /verify-item-lifecycle.
 ---
 
 # Verify item lifecycle
 
-`New` opens a session bus connection, takes a name, exports the item and its menu, may emit property signals, and only then registers with a StatusNotifierWatcher. `Close` closes that connection. The model in `model/ItemLifecycle.tla` checks that a failed `New` does not leave the connection or a requested name open, that registration never starts before the exports, that `Close` tears the connection down, and that a live item is still registered if the watcher that accepted it disappears and comes back. TLC, the TLA+ model checker, tries every order of those steps within the bounds below. Tests only cover the orders someone wrote down.
+`New` opens a session bus connection, takes a name, exports the item and its menu, may emit property signals, and only then registers with a StatusNotifierWatcher. After a successful register, it also watches `NameOwnerChanged` for the watcher names and re-registers when a new owner appears. `Close` stops that watch and closes the connection. The model in `model/ItemLifecycle.tla` checks that a failed `New` does not leave the connection or a requested name open, that registration never starts before the exports, that `Close` tears the connection down, and that a live item is still registered if the watcher that accepted it disappears and comes back. TLC, the TLA+ model checker, tries every order of those steps within the bounds below. Tests only cover the orders someone wrote down.
 
 ## Run it
 
@@ -15,7 +15,7 @@ From the repo root:
 .cursor/skills/verify-item-lifecycle/scripts/check-item-lifecycle
 ```
 
-It needs Java 11 or newer, `perl`, and `curl`. Without a system Java, `mise exec java@temurin-21 -- <command>` works. The first run downloads `tla2tools.jar` 1.8.0 to `~/.cache/deedles-tray/` and checks its sha256 (`fdffef247f563ef6edbfd44958d2a82db79e7564e07cb673262d896353fa6713`, the digest GitHub currently shows for the v1.8.0 asset). 1.8.0 is a prerelease, and upstream sometimes replaces its jar. If a fresh download fails the check, compare its sha256 with the digest GitHub shows for the release asset, then update `TLA_SHA256` in all check scripts. `verify-menu-sync` and `verify-menu-locks` use the same cache path and may still have an older digest. Set `TLA2TOOLS_JAR` to use another copy. A run takes a few seconds. `TLC_WORKERS=2` limits the cores it uses. CI runs formal checks in the `formal verification` job of `.github/workflows/test.yml`.
+It needs Java 11 or newer, `perl`, and `curl`. Without a system Java, `mise exec java@temurin-21 -- <command>` works. The first run downloads `tla2tools.jar` 1.8.0 to `~/.cache/deedles-tray/` and checks its sha256 (`fdffef247f563ef6edbfd44958d2a82db79e7564e07cb673262d896353fa6713`, the digest GitHub currently shows for the v1.8.0 asset). 1.8.0 is a prerelease, and upstream sometimes replaces its jar. If a fresh download fails the check, compare its sha256 with the digest GitHub shows for the release asset, then update `TLA_SHA256` in all check scripts. `verify-menu-sync` and `verify-menu-locks` use the same cache path and may still have an older digest. Set `TLA2TOOLS_JAR` to use another copy. A run takes a few seconds. `TLC_WORKERS=2` limits the cores it uses. Formal checks are not part of CI. Run the script locally after changing the covered code.
 
 To check one property alone, skipping the known findings list and the control runs:
 
@@ -72,9 +72,9 @@ These are assumptions the script cannot read from the code:
 
 - `PASS` lists every property that held in every reachable state.
 - `FAIL <property>` means a new break. Open the `.out` file it names. Its `State N:` lines are the steps, and the variables under each step show what changed.
-- `KNOWN FINDING still present` is expected for the findings below. The check exits 0 when only those fail.
+- `KNOWN FINDING still present` is for entries still listed in `KNOWN_FINDINGS` in the script. There are currently none. The check exits 0 when only those fail.
 - `FIXED? <property> now passes` means the model no longer finds that break with the fact FALSE, or the code fact for the fix is already TRUE. Confirm the fix in the code with a test, since a code fact can flip without the bug being gone. Then remove the entry from `KNOWN_FINDINGS` in the script and from Findings below. The check exits 1 until you do.
-- `PASS  ExportBeforeRegister fails with RegisterAfterExport FALSE, as it must` and `PASS  CloseTearsDown fails with CloseCallsConnClose FALSE, as it must` are the control runs. They force those facts FALSE whatever the code says, so they show the model still finds those breaks. A `FAIL` on either means the model lost that path, and a pass of the main run no longer says anything about it.
+- `PASS  ExportBeforeRegister fails with RegisterAfterExport FALSE, as it must`, `PASS  CloseTearsDown fails with CloseCallsConnClose FALSE, as it must`, and `PASS  RegisteredSurvivesWatcherRestart fails with ReregistersOnWatcherRestart FALSE, as it must` are the control runs. They force those facts FALSE whatever the code says, so they show the model still finds those breaks. A `FAIL` on any of them means the model lost that path, and a pass of the main run no longer says anything about it.
 - `MODEL STALE` means one of the assumptions above no longer matches the code. See the next section.
 - `TOOL ERROR` means TLC did not finish. Read the `.out` file. It is usually a model syntax or type error.
 
@@ -85,9 +85,9 @@ The script prints `code facts` first. Each is a model constant read from the cod
 | Constant | TRUE when the code has | Property that fails when it flips |
 |---|---|---|
 | `NewClosesConnOnErr` | a close-on-error `defer` after `ConnectSessionBus` in `New`, or both post-connect error returns (`initProtoData` and `export`) calling `item.Close`, `item.conn.Close`, or `conn.Close` before they return. TRUE is the current code. | `FailedNewClosesConn` when FALSE |
-| `RegisterAfterExport` | `export` calls `createMenu`, then `SetProps`, then `RegisterStatusNotifierItem`, and does not call `RegisterStatusNotifierItem` before `createMenu` | `ExportBeforeRegister` when FALSE |
+| `RegisterAfterExport` | `export` calls `createMenu`, then `SetProps`, then `registerWithWatchers`, `registerWithWatchers` calls `RegisterStatusNotifierItem`, and `export` does not register before `createMenu` | `ExportBeforeRegister` when FALSE |
 | `CloseCallsConnClose` | `Item.Close` calls `item.conn.Close()` | `CloseTearsDown` when FALSE |
-| `ReregistersOnWatcherRestart` | `item.go` has a `NameOwnerChanged` or `WatchName` watch, and a method other than `export` calls `RegisterStatusNotifierItem`. FALSE is the current code. | `RegisteredSurvivesWatcherRestart` when FALSE |
+| `ReregistersOnWatcherRestart` | `item.go` has a `NameOwnerChanged` or `WatchName` watch, and a method other than `export` calls `RegisterStatusNotifierItem`. TRUE is the current code. | `RegisteredSurvivesWatcherRestart` when FALSE |
 
 When a check fails or says `MODEL STALE`, compare the facts and assumptions with a run on `master`:
 
@@ -109,11 +109,11 @@ A new way for `New` to fail after connecting, or a new path that re-registers wi
 | `ExportIntrospectOK`, `ExportIntrospectFail` | `exportIntrospect` |
 | `CreateMenuOK`, `CreateMenuFail` | `createMenu` → `Menu.export` of dbusmenu methods, properties, and introspect |
 | `InitSetPropsOK`, `InitSetPropsFail` | the initial `SetProps` in `export`, which may emit property signals before registration |
-| `RegisterFDWins`, `RegisterKDEWins`, `RegisterBothMiss` | the `RegisterStatusNotifierItem` loop over `spaces` in `export` |
+| `RegisterFDWins`, `RegisterKDEWins`, `RegisterBothMiss` | `registerWithWatchers`, called from `export` after the initial `SetProps` |
 | `FinishEarlyReg` | only with `RegisterAfterExport` FALSE: `New` finishes after a successful early register and the later export steps |
 | `AppSetProps` | `Item.SetProps` and `emit` after `New` returns |
 | `HostActivate`, `HostSecondaryActivate`, `HostContextMenu`, `HostScroll` | `statusnotifieritem.go` methods, which call the `Handler` if one is set |
-| `WatcherDrops`, `WatcherReturns` | the watcher that accepted the item leaving the bus and later being claimed again |
+| `WatcherDrops`, `WatcherReturns` | the watcher that accepted the item leaving the bus and later being claimed again. `WatcherReturns` models the `NameOwnerChanged` handler in `watchWatcher` / `onWatcherNameOwnerChanged` as the same step as the name coming back |
 | `CloseItem` | `Item.Close` |
 | `Done` | no further product step; keeps terminal states from deadlocking the check |
 
@@ -121,24 +121,21 @@ The model leaves out a second `New` on the same process, `ReleaseName` without `
 
 ## Findings
 
-`FailedNewClosesConn` holds on the current code. `New` defers `item.Close()` when `initProtoData` or `export` returns an error after `ConnectSessionBus` succeeded. `TestFailedNewClosesConn` checks that a failed `New` with no StatusNotifierWatcher on the bus leaves no session-bus names behind.
+There are no known findings. All five properties, plus `TypeOK`, hold in these bounds. The main run checks 181 distinct states.
 
-`RegisteredSurvivesWatcherRestart` is still a known finding, not a fix in this change: after a successful `New`, nothing watches the watcher name or calls `RegisterStatusNotifierItem` again. The shortest path, in the code's words:
+`FailedNewClosesConn` holds because `New` defers `item.Close()` when `initProtoData`, `export`, or `watchWatcher` returns an error after `ConnectSessionBus` succeeded. `TestFailedNewClosesConn` checks that a failed `New` with no StatusNotifierWatcher on the bus leaves no session-bus names behind.
 
-1. `New` finishes and the item is registered with, for example, `org.freedesktop.StatusNotifierWatcher`.
-2. That watcher leaves the bus. Its registered list is gone.
-3. A new owner claims the same watcher name. The new instance has an empty list.
-4. The item's connection, name, and exports are still up, but it is not registered, so a host that looks at the watcher does not show it.
+`RegisteredSurvivesWatcherRestart` holds because, after a successful register, `watchWatcher` subscribes to `NameOwnerChanged` for both watcher names and `onWatcherNameOwnerChanged` calls `registerWithWatchers` when a new owner appears. `TestItemReregistersWhenWatcherRestarts` checks that a live `Item` registers again with a replacement `org.kde.StatusNotifierWatcher`. `TestCloseStopsWatcherWatch` checks that `Close` is safe to call twice and that a later watcher restart does not re-register.
 
-`ExportBeforeRegister`, `CloseTearsDown`, `NoDeadlock`, and `TypeOK` also hold in these bounds. The main run checks 181 distinct states.
+`ExportBeforeRegister`, `CloseTearsDown`, and `NoDeadlock` also hold.
 
 ## Keep it in step with the code
 
-Sync commit: `633c13c` (the model was last confirmed to describe the covered code at this commit)
+Sync commit: `34ad2bc` (the model was last confirmed to describe the covered code at this commit)
 
 Covered code:
 
-- `item.go`: `New`, `initProtoData`, `export`, `exportProps`, `exportIntrospect`, `SetProps`, `emit`, `Close`, `getName`
+- `item.go`: `New`, `initProtoData`, `export`, `registerWithWatchers`, `watchWatcher`, `serveWatcherWatch`, `onWatcherNameOwnerChanged`, `exportProps`, `exportIntrospect`, `SetProps`, `emit`, `Close`, `getName`
 - `menu.go`: `createMenu`, `Menu.export`, `Menu.exportProps`, `Menu.exportIntrospect`
 - `statusnotifieritem.go`: `ContextMenu`, `Activate`, `SecondaryActivate`, `Scroll`
 

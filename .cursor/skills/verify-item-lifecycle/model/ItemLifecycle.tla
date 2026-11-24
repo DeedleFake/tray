@@ -8,15 +8,15 @@
 (* dbusmenu, may emit property signals from the initial SetProps, then     *)
 (* registers with org.freedesktop.StatusNotifierWatcher and, if that       *)
 (* fails, org.kde.StatusNotifierWatcher. First success wins. If both       *)
-(* fail, or any earlier export step fails, New returns an error. On the    *)
-(* current code, that error path does not call conn.Close(), so the        *)
-(* connection and any requested name stay open.                            *)
+(* fail, or any earlier export step fails, New returns an error and        *)
+(* closes the connection. After a successful register, New also            *)
+(* subscribes to NameOwnerChanged for both watcher names.                  *)
 (*                                                                         *)
 (* After a successful New, the app can SetProps, the host can call         *)
 (* Activate, SecondaryActivate, ContextMenu, and Scroll, the watcher that  *)
 (* accepted the item can disappear and come back, and Close closes the     *)
-(* connection. The current code does not re-register when the watcher      *)
-(* returns.                                                                *)
+(* connection. When the watcher name is claimed again, the current code    *)
+(* calls RegisterStatusNotifierItem again.                                 *)
 (*                                                                         *)
 (* File references are to the repo root: item.go, menu.go, and             *)
 (* statusnotifieritem.go. The constants other than the bounds are code     *)
@@ -332,10 +332,9 @@ WatcherDrops ==
                  exportedIntrospect, exportedMenu, emittedBeforeReg,
                  registerAttempted, registeredOn, propSets, hostCalls>>
 
-\* That watcher name is claimed again. The current code does not call
-\* RegisterStatusNotifierItem. When ReregistersOnWatcherRestart, this
-\* step re-registers in the same step as the name coming back, as a
-\* NameOwnerChanged handler would.
+\* That watcher name is claimed again. When ReregistersOnWatcherRestart,
+\* this step re-registers in the same step as the name coming back, as
+\* the NameOwnerChanged handler in item.go does.
 WatcherReturns ==
   /\ pc = "ready"
   /\ registeredOn # "none"
