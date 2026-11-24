@@ -84,7 +84,7 @@ The script prints `code facts` first. Each is a model constant read from the cod
 
 | Constant | TRUE when the code has | Property that fails when it flips |
 |---|---|---|
-| `NewClosesConnOnErr` | a close-on-error `defer` after `ConnectSessionBus` in `New`, or both post-connect error returns (`initProtoData` and `export`) calling `item.Close`, `item.conn.Close`, or `conn.Close` before they return. FALSE is the current code. | `FailedNewClosesConn` when FALSE |
+| `NewClosesConnOnErr` | a close-on-error `defer` after `ConnectSessionBus` in `New`, or both post-connect error returns (`initProtoData` and `export`) calling `item.Close`, `item.conn.Close`, or `conn.Close` before they return. TRUE is the current code. | `FailedNewClosesConn` when FALSE |
 | `RegisterAfterExport` | `export` calls `createMenu`, then `SetProps`, then `RegisterStatusNotifierItem`, and does not call `RegisterStatusNotifierItem` before `createMenu` | `ExportBeforeRegister` when FALSE |
 | `CloseCallsConnClose` | `Item.Close` calls `item.conn.Close()` | `CloseTearsDown` when FALSE |
 | `ReregistersOnWatcherRestart` | `item.go` has a `NameOwnerChanged` or `WatchName` watch, and a method other than `export` calls `RegisterStatusNotifierItem`. FALSE is the current code. | `RegisteredSurvivesWatcherRestart` when FALSE |
@@ -121,28 +121,20 @@ The model leaves out a second `New` on the same process, `ReleaseName` without `
 
 ## Findings
 
-`FailedNewClosesConn` is broken on the current code. `New` returns after a failed `initProtoData` or `export` without calling `conn.Close()`. The caller never receives the `*Item`, so the connection cannot be closed through the API. The shortest path, in the code's words:
+`FailedNewClosesConn` holds on the current code. `New` defers `item.Close()` when `initProtoData` or `export` returns an error after `ConnectSessionBus` succeeded. `TestFailedNewClosesConn` checks that a failed `New` with no StatusNotifierWatcher on the bus leaves no session-bus names behind.
 
-1. `New` calls `dbus.ConnectSessionBus`, which succeeds.
-2. `initProtoData` takes the well-known name `org.freedesktop.StatusNotifierItem-<pid>-<n>`, or falls back to the unique name.
-3. `export`'s first `conn.Export` of a StatusNotifierItem interface fails.
-4. `New` returns `export StatusNotifierItem: ...` without calling `conn.Close()`.
-5. The session bus connection, and the name it requested, stay open.
-
-The same leak happens on every later failure in `export`, including the path users actually hit: both `RegisterStatusNotifierItem` calls fail because no StatusNotifierWatcher is on the bus. `verify-tray`'s registration notes already record that `New` returns an error in that case and the example panics. The connection is still left open.
-
-`RegisteredSurvivesWatcherRestart` is also broken on the current code. After a successful `New`, nothing watches the watcher name or calls `RegisterStatusNotifierItem` again. The shortest path, in the code's words:
+`RegisteredSurvivesWatcherRestart` is still a known finding, not a fix in this change: after a successful `New`, nothing watches the watcher name or calls `RegisterStatusNotifierItem` again. The shortest path, in the code's words:
 
 1. `New` finishes and the item is registered with, for example, `org.freedesktop.StatusNotifierWatcher`.
 2. That watcher leaves the bus. Its registered list is gone.
 3. A new owner claims the same watcher name. The new instance has an empty list.
 4. The item's connection, name, and exports are still up, but it is not registered, so a host that looks at the watcher does not show it.
 
-`ExportBeforeRegister`, `CloseTearsDown`, `NoDeadlock`, and `TypeOK` hold in these bounds.
+`ExportBeforeRegister`, `CloseTearsDown`, `NoDeadlock`, and `TypeOK` also hold in these bounds. The main run checks 181 distinct states.
 
 ## Keep it in step with the code
 
-Sync commit: `acf85ab` (the model was last confirmed to describe the covered code at this commit)
+Sync commit: `633c13c` (the model was last confirmed to describe the covered code at this commit)
 
 Covered code:
 

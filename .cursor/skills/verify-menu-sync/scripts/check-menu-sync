@@ -3,8 +3,8 @@
 # The model's code-fact constants are read from the code, so removing a
 # signal or a revision bump in the code turns its constant FALSE and the
 # check shows what breaks. The same is true of the facts that describe
-# Remove, getParent, AddChild/AppendChild on a removed item, and
-# AboutToShowGroup's handling of the root.
+# Remove, getParent, AddChild/AppendChild on a removed item,
+# AboutToShowGroup's handling of the root, and cycle-move guards.
 set -euo pipefail
 
 TLA_VERSION=1.8.0
@@ -21,10 +21,6 @@ MAX_LABEL=${MAX_LABEL:-2}
 # (fixed) values, and is expected to fail with the live code facts.
 # Remove an entry once the code is fixed and the check passes it.
 KNOWN_FINDINGS=(
-  "NodesReachable:RemoveLeavesOrphans=TRUE,ParentMustBeLive=FALSE"
-  "NoDanglingChildIDs:RemovedKeepsParent=TRUE"
-  "RemovedHasNoParent:RemovedKeepsParent=TRUE"
-  "AboutToShowGroupAcceptsRoot:AboutToShowGroupRejectsRoot=TRUE"
 )
 
 PROPERTIES=(
@@ -35,6 +31,7 @@ PROPERTIES=(
   NodesReachable
   NoDanglingChildIDs
   RemovedHasNoParent
+  Acyclic
   AboutToShowGroupAcceptsRoot
 )
 
@@ -134,6 +131,14 @@ flag RestoreRemovedToNodes "$(all \
 # TRUE while AboutToShowGroup has no special case for the root id 0,
 # so nodes[0] is nil and 0 is reported in invalid.
 flag AboutToShowGroupRejectsRoot "$(not "$(anchor dbusmenu.go 'func \(menu \*dbusmenu\) AboutToShowGroup\('"$BODY"'(?:id == 0|id != 0)')")"
+
+# TRUE when appendChild and MoveBefore refuse a move that would put an
+# item under itself or a descendant, and MoveBefore(item, item) is a
+# no-op.
+flag RejectCycleMoves "$(all \
+  "$(anchor menuitem.go 'func appendChild\('"$BODY"'isAncestor\(')" \
+  "$(anchor menuitem.go 'func \(item \*MenuItem\) MoveBefore\('"$BODY"'item == sibling')" \
+  "$(anchor menuitem.go 'func \(item \*MenuItem\) MoveBefore\('"$BODY"'isAncestor\(')")"
 
 # Assumptions the model's steps rest on. Each must hold, or the model no
 # longer describes the code.
@@ -279,6 +284,16 @@ if [[ -z $ONLY ]]; then
     PropsConverge) echo "PASS  PropsConverge fails with LateReply TRUE, as it must" ;;
     none) echo "FAIL  PropsConverge passes with LateReply TRUE, so the model no longer sees the race"; status=1 ;;
     *) echo "TOOL ERROR, see $OUT/PropsConverge-with-LateReply.out"; status=2 ;;
+  esac
+  OVERRIDE_FACTS=
+  # The model must still find a cycle when the guard is removed, or a
+  # pass of Acyclic and NodesReachable above proves nothing about it.
+  OVERRIDE_FACTS="RejectCycleMoves=FALSE"
+  r=$(run Acyclic-without-RejectCycleMoves NodesReachable Acyclic)
+  case $r in
+    NodesReachable|Acyclic) echo "PASS  $r fails with RejectCycleMoves FALSE, as it must" ;;
+    none) echo "FAIL  NodesReachable and Acyclic pass with RejectCycleMoves FALSE, so the model no longer sees a cycle move"; status=1 ;;
+    *) echo "TOOL ERROR, see $OUT/Acyclic-without-RejectCycleMoves.out"; status=2 ;;
   esac
   OVERRIDE_FACTS=
 fi

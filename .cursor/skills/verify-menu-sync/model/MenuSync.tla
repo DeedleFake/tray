@@ -15,6 +15,9 @@
 (* and AppendChild/MoveBefore may put a removed id back into a live        *)
 (* children list without putting it back into Menu.nodes, unless the       *)
 (* matching code-fact constant says the code now does otherwise.           *)
+(* AppendChild and MoveBefore also attempt moves that would create a       *)
+(* cycle. When RejectCycleMoves is TRUE, those attempts leave the tree     *)
+(* unchanged; when it is FALSE, the move happens and the tree can cycle.   *)
 (*                                                                         *)
 (* File references are to the repo root. "godbus" is                      *)
 (* github.com/godbus/dbus/v5 at the version in go.mod.                     *)
@@ -39,7 +42,8 @@ CONSTANTS
   RemovedKeepsParent,      \* getParent can return non-nil after Remove
   ParentMustBeLive,        \* AddChild/AppendChild refuse a receiver not in Menu.nodes
   RestoreRemovedToNodes,   \* AppendChild/MoveBefore put a removed child back in Menu.nodes
-  AboutToShowGroupRejectsRoot  \* AboutToShowGroup treats id 0 as missing from Menu.nodes
+  AboutToShowGroupRejectsRoot, \* AboutToShowGroup treats id 0 as missing from Menu.nodes
+  RejectCycleMoves         \* AppendChild/MoveBefore refuse a move under the item or a descendant
 
 Root == 0
 Ids == 1..MaxItems
@@ -199,11 +203,15 @@ RemoveItem(n) ==
      /\ UNCHANGED <<label, lastId, menuShut>>
 
 \* appendChild (Menu.AppendChild, MenuItem.AppendChild) when sib = 0, and
-\* MoveBefore(sib) otherwise. dst never sits under c: the library does not
-\* check that, and a cycle makes buildLayout recurse forever. A held
-\* pointer to a removed child is accepted while getParent is non-nil. The
-\* current code then inserts the id into dst's children and does not put
-\* it back into Menu.nodes unless RestoreRemovedToNodes.
+\* MoveBefore(sib) otherwise. A held pointer to a removed child is
+\* accepted while getParent is non-nil. The current code then inserts
+\* the id into dst's children and does not put it back into Menu.nodes
+\* unless RestoreRemovedToNodes.
+\* WouldCycle is true when dst is c or sits under c. With
+\* RejectCycleMoves, those attempts are no-ops. Without it, the move
+\* happens and can detach a cycle from the root, as the unfixed Go did.
+WouldCycle(c, dst) == dst \in Below(kids, c)
+
 Move(c, dst, sib, signals) ==
   LET src == par[c]
       k1 == [kids EXCEPT ![src] = Remove(@, c)]
@@ -212,7 +220,7 @@ Move(c, dst, sib, signals) ==
       ups == IF dst = src THEN <<dst>> ELSE <<dst, src>>
   IN /\ c \in Created /\ HasParent(c)
      /\ LiveDest(dst)
-     /\ dst \notin Below(kids, c)
+     /\ (~WouldCycle(c, dst) \/ ~RejectCycleMoves)
      /\ kids' = k2
      /\ par' = [par EXCEPT ![c] = dst]
      /\ nodes' = IF RestoreRemovedToNodes THEN nodes \cup {c} ELSE nodes
@@ -221,10 +229,25 @@ Move(c, dst, sib, signals) ==
                    \o CDIf(src, kids, k1) \o CDIf(dst, k1, k2)
      /\ UNCHANGED <<label, lastId, menuShut>>
 
-AppendChild(c, dst) == Move(c, dst, 0, AppendSignalsLayout)
+RejectMove(c, dst) ==
+  /\ c \in Created /\ HasParent(c)
+  /\ LiveDest(dst)
+  /\ WouldCycle(c, dst)
+  /\ RejectCycleMoves
+  /\ UNCHANGED <<nodes, kids, par, label, lastId, rev, revLog, out, menuShut>>
 
-MoveBefore(c, sib) == /\ sib \in Created /\ sib # c /\ HasParent(sib)
-                      /\ Move(c, par[sib], sib, MoveBeforeSignalsLayout)
+AppendChild(c, dst) ==
+  \/ Move(c, dst, 0, AppendSignalsLayout)
+  \/ RejectMove(c, dst)
+
+\* MoveBefore(item, item) is a no-op in the fixed code. Cycle moves of
+\* item under a descendant go through RejectMove when the fact is TRUE.
+MoveBefore(c, sib) ==
+  \/ /\ sib = c
+     /\ UNCHANGED <<nodes, kids, par, label, lastId, rev, revLog, out, menuShut>>
+  \/ /\ sib \in Created /\ sib # c /\ HasParent(sib)
+     /\ \/ Move(c, par[sib], sib, MoveBeforeSignalsLayout)
+        \/ RejectMove(c, par[sib])
 
 \* One app call. Each is its own definition so TLC names the step.
 AppCall == /\ ops < MaxOps
@@ -366,6 +389,17 @@ NoDanglingChildIDs ==
 
 \* A removed item has getParent() == nil.
 RemovedHasNoParent == \A n \in Created \ nodes : ~HasParent(n)
+
+\* Walking parents from any live node reaches the root. A cycle created
+\* by an unguarded move never does.
+Acyclic ==
+  \A n \in nodes :
+    LET Chain[i \in 0..MaxItems] ==
+          IF i = 0 THEN n
+          ELSE IF Chain[i - 1] \in {Root} \cup (NodeIds \ nodes)
+               THEN Root
+               ELSE par[Chain[i - 1]]
+    IN Chain[MaxItems] = Root
 
 \* AboutToShowGroup([0]) checks the root like AboutToShow(0), and does
 \* not report 0 as invalid.
