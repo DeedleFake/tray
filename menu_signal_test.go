@@ -350,3 +350,351 @@ func TestSetPropsAfterParentRemoved(t *testing.T) {
 		t.Fatalf("label = %#v", child.props["label"])
 	}
 }
+
+func nodeIDs(menu *Menu) []int {
+	ids := make([]int, 0, len(menu.nodes))
+	for id := range menu.nodes {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+func TestRemoveDetachesDescendants(t *testing.T) {
+	menu, _ := newCaptureMenu(t)
+	parent, err := menu.AddChild(MenuItemLabel("parent"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := parent.AddChild(MenuItemLabel("child"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	grand, err := child.AddChild(MenuItemLabel("grand"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sibling, err := menu.AddChild(MenuItemLabel("sibling"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := parent.Remove(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, item := range []*MenuItem{parent, child, grand} {
+		if _, ok := menu.nodes[item.id]; ok {
+			t.Fatalf("item %d still in nodes after parent.Remove", item.id)
+		}
+		if item.getParent() != nil {
+			t.Fatalf("item %d still has parent %v", item.id, item.parent)
+		}
+	}
+	if menu.nodes[sibling.id] != sibling {
+		t.Fatal("sibling was removed")
+	}
+	if slices.Contains(menu.getChildren(), parent.id) {
+		t.Fatalf("root children = %v still list parent %d", menu.getChildren(), parent.id)
+	}
+}
+
+func TestSetPropsAfterRemovedRootChild(t *testing.T) {
+	menu, buf := newCaptureMenu(t)
+	item, err := menu.AddChild(MenuItemLabel("item"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := item.Remove(); err != nil {
+		t.Fatal(err)
+	}
+	mark := len(buf.waitQuiet())
+
+	err = item.SetProps(MenuItemLabel("renamed"))
+	want := fmt.Sprintf("menu item %d has no parent", item.id)
+	if err == nil || err.Error() != want {
+		t.Fatalf("SetProps err = %v, want %s", err, want)
+	}
+	if item.props["label"] != "item" {
+		t.Fatalf("label = %#v", item.props["label"])
+	}
+	if sigs := decodeSignals(signalBytes(buf, mark)); len(sigs) != 0 {
+		t.Fatalf("SetProps after Remove signals = %+v", sigs)
+	}
+}
+
+func TestAddChildOnRemovedItem(t *testing.T) {
+	menu, buf := newCaptureMenu(t)
+	item, err := menu.AddChild(MenuItemLabel("item"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := item.Remove(); err != nil {
+		t.Fatal(err)
+	}
+	before := nodeIDs(menu)
+	mark := len(buf.waitQuiet())
+
+	child, err := item.AddChild(MenuItemLabel("orphan"))
+	if child != nil || err != nil {
+		t.Fatalf("AddChild = (%v, %v), want (nil, nil)", child, err)
+	}
+	if got := nodeIDs(menu); !slices.Equal(got, before) {
+		t.Fatalf("nodes = %v, want %v", got, before)
+	}
+	if sigs := decodeSignals(signalBytes(buf, mark)); len(sigs) != 0 {
+		t.Fatalf("AddChild after Remove signals = %+v", sigs)
+	}
+}
+
+func TestAppendChildAndMoveBeforeAfterRemove(t *testing.T) {
+	menu, buf := newCaptureMenu(t)
+	a, err := menu.AddChild(MenuItemLabel("a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := menu.AddChild(MenuItemLabel("b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Remove(); err != nil {
+		t.Fatal(err)
+	}
+	beforeNodes := nodeIDs(menu)
+	beforeRoot := slices.Clone(menu.getChildren())
+	beforeB := slices.Clone(b.getChildren())
+	mark := len(buf.waitQuiet())
+
+	if err := menu.AppendChild(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.AppendChild(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.MoveBefore(b); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := nodeIDs(menu); !slices.Equal(got, beforeNodes) {
+		t.Fatalf("nodes = %v, want %v", got, beforeNodes)
+	}
+	if got := menu.getChildren(); !slices.Equal(got, beforeRoot) {
+		t.Fatalf("root children = %v, want %v", got, beforeRoot)
+	}
+	if got := b.getChildren(); !slices.Equal(got, beforeB) {
+		t.Fatalf("b children = %v, want %v", got, beforeB)
+	}
+	if slices.Contains(menu.getChildren(), a.id) || slices.Contains(b.getChildren(), a.id) {
+		t.Fatalf("removed id %d reinserted into a live children list", a.id)
+	}
+	if sigs := decodeSignals(signalBytes(buf, mark)); len(sigs) != 0 {
+		t.Fatalf("signals after AppendChild/MoveBefore on removed item = %+v", sigs)
+	}
+}
+
+func TestRemoveAlreadyRemovedIsNoop(t *testing.T) {
+	menu, buf := newCaptureMenu(t)
+	item, err := menu.AddChild(MenuItemLabel("item"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := item.Remove(); err != nil {
+		t.Fatal(err)
+	}
+	mark := len(buf.waitQuiet())
+	if err := item.Remove(); err != nil {
+		t.Fatal(err)
+	}
+	if sigs := decodeSignals(signalBytes(buf, mark)); len(sigs) != 0 {
+		t.Fatalf("second Remove signals = %+v", sigs)
+	}
+}
+
+func TestAboutToShowGroupAcceptsRoot(t *testing.T) {
+	menu, _ := newCaptureMenu(t)
+	menu.dirty.Add(0)
+
+	updates, invalid, derr := (*dbusmenu)(menu).AboutToShowGroup([]int{0})
+	if derr != nil {
+		t.Fatal(derr)
+	}
+	if len(invalid) != 0 {
+		t.Fatalf("invalid = %v, want none", invalid)
+	}
+	if len(updates) != 1 || updates[0].ID != 0 || !updates[0].NeedUpdate {
+		t.Fatalf("updates = %+v, want root NeedUpdate", updates)
+	}
+
+	updates, invalid, derr = (*dbusmenu)(menu).AboutToShowGroup([]int{0, 99})
+	if derr != nil {
+		t.Fatal(derr)
+	}
+	if !slices.Equal(invalid, []int{99}) {
+		t.Fatalf("invalid = %v, want [99]", invalid)
+	}
+	if len(updates) != 1 || updates[0].ID != 0 || !updates[0].NeedUpdate {
+		t.Fatalf("updates = %+v, want root NeedUpdate", updates)
+	}
+}
+
+type menuSnap struct {
+	nodes []int
+	root  []int
+	kids  map[int][]int
+	pars  map[int]int
+}
+
+func snapMenu(menu *Menu) menuSnap {
+	s := menuSnap{
+		nodes: nodeIDs(menu),
+		root:  slices.Clone(menu.getChildren()),
+		kids:  make(map[int][]int, len(menu.nodes)),
+		pars:  make(map[int]int, len(menu.nodes)),
+	}
+	for id, item := range menu.nodes {
+		s.kids[id] = slices.Clone(item.getChildren())
+		s.pars[id] = item.parent
+	}
+	return s
+}
+
+func layoutChildIDs(children []any) []int {
+	ids := make([]int, 0, len(children))
+	for _, c := range children {
+		child, ok := c.(menuLayout)
+		if !ok {
+			return nil
+		}
+		ids = append(ids, child.ID)
+	}
+	return ids
+}
+
+func (s menuSnap) check(t *testing.T, menu *Menu) {
+	t.Helper()
+	got := snapMenu(menu)
+	if !slices.Equal(got.nodes, s.nodes) {
+		t.Fatalf("nodes = %v, want %v", got.nodes, s.nodes)
+	}
+	if !slices.Equal(got.root, s.root) {
+		t.Fatalf("root children = %v, want %v", got.root, s.root)
+	}
+	for id, kids := range s.kids {
+		if !slices.Equal(got.kids[id], kids) {
+			t.Fatalf("item %d children = %v, want %v", id, got.kids[id], kids)
+		}
+		if got.pars[id] != s.pars[id] {
+			t.Fatalf("item %d parent = %d, want %d", id, got.pars[id], s.pars[id])
+		}
+	}
+	layout := (*dbusmenu)(menu).buildLayout(nil, -1, nil)
+	if layout.ID != 0 {
+		t.Fatalf("root layout id = %d, want 0", layout.ID)
+	}
+	if !slices.Equal(layoutChildIDs(layout.Children), s.root) {
+		t.Fatalf("buildLayout root children = %v, want %v", layoutChildIDs(layout.Children), s.root)
+	}
+}
+
+func TestAppendChildSelfRejected(t *testing.T) {
+	menu, buf := newCaptureMenu(t)
+	item, err := menu.AddChild(MenuItemLabel("item"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := snapMenu(menu)
+	mark := len(buf.waitQuiet())
+
+	err = item.AppendChild(item)
+	want := "cannot move menu item under itself or a descendant"
+	if err == nil || err.Error() != want {
+		t.Fatalf("AppendChild(self) err = %v, want %s", err, want)
+	}
+	before.check(t, menu)
+	if sigs := decodeSignals(signalBytes(buf, mark)); len(sigs) != 0 {
+		t.Fatalf("signals = %+v", sigs)
+	}
+}
+
+func TestAppendChildAncestorRejected(t *testing.T) {
+	menu, buf := newCaptureMenu(t)
+	parent, err := menu.AddChild(MenuItemLabel("parent"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := parent.AddChild(MenuItemLabel("child"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	grand, err := child.AddChild(MenuItemLabel("grand"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := snapMenu(menu)
+	mark := len(buf.waitQuiet())
+	want := "cannot move menu item under itself or a descendant"
+
+	err = child.AppendChild(parent)
+	if err == nil || err.Error() != want {
+		t.Fatalf("child.AppendChild(parent) err = %v, want %s", err, want)
+	}
+	err = grand.AppendChild(parent)
+	if err == nil || err.Error() != want {
+		t.Fatalf("grand.AppendChild(parent) err = %v, want %s", err, want)
+	}
+
+	before.check(t, menu)
+	if sigs := decodeSignals(signalBytes(buf, mark)); len(sigs) != 0 {
+		t.Fatalf("signals = %+v", sigs)
+	}
+}
+
+func TestMoveBeforeDescendantRejected(t *testing.T) {
+	menu, buf := newCaptureMenu(t)
+	parent, err := menu.AddChild(MenuItemLabel("parent"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := parent.AddChild(MenuItemLabel("child"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	grand, err := child.AddChild(MenuItemLabel("grand"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := snapMenu(menu)
+	mark := len(buf.waitQuiet())
+
+	err = parent.MoveBefore(grand)
+	want := "cannot move menu item under itself or a descendant"
+	if err == nil || err.Error() != want {
+		t.Fatalf("parent.MoveBefore(grand) err = %v, want %s", err, want)
+	}
+	before.check(t, menu)
+	if sigs := decodeSignals(signalBytes(buf, mark)); len(sigs) != 0 {
+		t.Fatalf("signals = %+v", sigs)
+	}
+}
+
+func TestMoveBeforeSelfIsNoop(t *testing.T) {
+	menu, buf := newCaptureMenu(t)
+	first, err := menu.AddChild(MenuItemLabel("first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = menu.AddChild(MenuItemLabel("second"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := snapMenu(menu)
+	mark := len(buf.waitQuiet())
+
+	if err := first.MoveBefore(first); err != nil {
+		t.Fatal(err)
+	}
+	before.check(t, menu)
+	if sigs := decodeSignals(signalBytes(buf, mark)); len(sigs) != 0 {
+		t.Fatalf("signals = %+v", sigs)
+	}
+}

@@ -18,7 +18,6 @@ MAX_RESTARTS=${MAX_RESTARTS:-1}
 # with it FALSE. Remove an entry once the code is fixed and the check passes
 # the property with the fact the code now has.
 KNOWN_FINDINGS=(
-  FailedNewClosesConn:NewClosesConnOnErr
   RegisteredSurvivesWatcherRestart:ReregistersOnWatcherRestart
 )
 

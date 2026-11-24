@@ -1,11 +1,11 @@
 ---
 name: verify-menu-sync
-description: Model-check that a desktop tray host's copy of a deedles.dev/tray menu ends up matching the app's Menu after any mix of AddChild, Remove, AppendChild, MoveBefore, and SetProps calls racing with the host's GetLayout and GetGroupProperties calls, including calls on a held *MenuItem pointer after Remove, using a TLA+ model whose code facts are read from menu.go, menuitem.go, dbusmenu.go, and item.go. Use when a change touches updateLayout, emitPropertiesUpdated, setChildren, Menu or MenuItem methods that change the menu, getParent, GetLayout, buildLayout, GetGroupProperties, AboutToShow, AboutToShowGroup, claimMenuReplies, reply, Menu.m locking, the connection options in New, or the godbus version, or when running /verify-menu-sync.
+description: Model-check that a desktop tray host's copy of a deedles.dev/tray menu ends up matching the app's Menu after any mix of AddChild, Remove, AppendChild, MoveBefore, and SetProps calls racing with the host's GetLayout and GetGroupProperties calls, including calls on a held *MenuItem pointer after Remove and moves that would create a cycle, using a TLA+ model whose code facts are read from menu.go, menuitem.go, dbusmenu.go, and item.go. Use when a change touches updateLayout, emitPropertiesUpdated, setChildren, Menu or MenuItem methods that change the menu, getParent, GetLayout, buildLayout, GetGroupProperties, AboutToShow, AboutToShowGroup, claimMenuReplies, reply, Menu.m locking, the connection options in New, or the godbus version, or when running /verify-menu-sync.
 ---
 
 # Verify menu sync
 
-A tray host never reads the app's `Menu` directly. It keeps its own copy, built from `GetLayout` and `GetGroupProperties` replies and patched by `LayoutUpdated` and `ItemsPropertiesUpdated` signals. The model in `model/MenuSync.tla` checks that the copy ends up matching the menu, and that the menu tree itself stays well formed: every id in `Menu.nodes` is reachable from the root, every live `children` id is in `Menu.nodes`, a removed item has `getParent() == nil`, and `AboutToShowGroup([0])` treats the root like `AboutToShow(0)`. TLC, the TLA+ model checker, tries every order of app calls, signals, and replies within the bounds below, including a menu change that lands right after `GetLayout` or `GetGroupProperties` reads the menu, and including a call on a `*MenuItem` the app still holds after `Remove`. Tests only cover the orders someone wrote down.
+A tray host never reads the app's `Menu` directly. It keeps its own copy, built from `GetLayout` and `GetGroupProperties` replies and patched by `LayoutUpdated` and `ItemsPropertiesUpdated` signals. The model in `model/MenuSync.tla` checks that the copy ends up matching the menu, and that the menu tree itself stays well formed: every id in `Menu.nodes` is reachable from the root, every live `children` id is in `Menu.nodes`, a removed item has `getParent() == nil`, walking parents from any live node reaches the root, and `AboutToShowGroup([0])` treats the root like `AboutToShow(0)`. TLC, the TLA+ model checker, tries every order of app calls, signals, and replies within the bounds below, including a menu change that lands right after `GetLayout` or `GetGroupProperties` reads the menu, a call on a `*MenuItem` the app still holds after `Remove`, and a move that would put an item under itself or a descendant. Tests only cover the orders someone wrote down.
 
 The host in the model is the GNOME AppIndicator extension's `DBusClient` (`dbusMenu.js` in ubuntu/gnome-shell-extension-appindicator) with the menu open.
 
@@ -40,11 +40,12 @@ Each property is an invariant. `LayoutConverges` and `PropsConverge` are checked
 | `NodesReachable` | Every id in `Menu.nodes` is reachable from the root through live children lists. | A child of a removed item, or a child added on a held pointer to a removed item, stays in `Menu.nodes` but is not in the tree the host can walk. |
 | `NoDanglingChildIDs` | Every id in a live `children` list is in `Menu.nodes`. | `AppendChild` or `MoveBefore` on a removed item whose `getParent()` is still non-nil puts the deleted id back into a live `children` list. `GetLayout` skips it, so the host and the in-memory tree disagree about what is a child. |
 | `RemovedHasNoParent` | A removed item has `getParent() == nil`. | `Remove` never clears `item.parent`, so a removed root child still has parent 0 and `getParent()` returns the `Menu`. Later `SetProps`, `Remove`, `AppendChild`, and `MoveBefore` on the held pointer run as if the item were still in the tree. |
+| `Acyclic` | Walking parents from any live node reaches the root. | `AppendChild` or `MoveBefore` can put an item under itself or a descendant. `buildLayout` then recurses until the stack overflows, and the cycled items are no longer reachable from the root. |
 | `AboutToShowGroupAcceptsRoot` | `AboutToShowGroup([0])` checks the root's dirty state like `AboutToShow(0)`, and does not report 0 as invalid. | The host asks about the root, gets 0 back in `invalid`, and may skip a layout refresh that `AboutToShow(0)` would have requested. |
 
 ## Bounds and assumptions
 
-The script sets the bounds. Raise one with an environment variable when a change needs a deeper search: `MAX_OPS=4` takes about 3 minutes. Keep `MAX_OPS` at least 3, or the known findings for `NodesReachable` and `NoDanglingChildIDs` are not reachable and the check will report them as `FIXED?`.
+The script sets the bounds. Raise one with an environment variable when a change needs a deeper search: `MAX_OPS=4` takes about 3 minutes. Keep `MAX_OPS` at least 3, or the paths that used to break `NodesReachable` and `NoDanglingChildIDs` are not reachable.
 
 - `MAX_ITEMS=3`: at most 3 items are ever created, so an item can sit under another item and move between parents, and a call can use a held pointer to a removed item.
 - `MAX_OPS=3`: at most 3 app calls into the menu API, including calls on a held pointer after `Remove`.
@@ -71,7 +72,8 @@ These are assumptions the script cannot read from the code:
 
 - `PASS` lists every property that held in every reachable state.
 - `FAIL <property>` means a new break. Open the `.out` file it names. Its `State N:` lines are the steps, and the variables under each step show what changed.
-- `PASS  PropsConverge fails with LateReply TRUE, as it must` is the control run. It forces `LateReply` TRUE whatever the code says, so it shows the model still finds the stale reply described under Findings. `FAIL  PropsConverge passes with LateReply TRUE` means the model lost that race, and a pass of the main run no longer says anything about it.
+- `PASS  PropsConverge fails with LateReply TRUE, as it must` is a control run. It forces `LateReply` TRUE whatever the code says, so it shows the model still finds the stale reply described under Findings. `FAIL  PropsConverge passes with LateReply TRUE` means the model lost that race, and a pass of the main run no longer says anything about it.
+- `PASS  NodesReachable fails with RejectCycleMoves FALSE, as it must` or `PASS  Acyclic fails with RejectCycleMoves FALSE, as it must` is the other control run. It forces the cycle-move guard off, so it shows the model still finds an unguarded cycle. `FAIL  NodesReachable and Acyclic pass with RejectCycleMoves FALSE` means the model no longer attempts those moves, and a pass of the main run no longer says anything about them.
 - `KNOWN FINDING still present` is expected for a property listed in `KNOWN_FINDINGS` in the script. The check exits 0 when only those fail with the live code facts, and each listed property holds when its code-fact constants are set to their fixed values.
 - `FIXED? <property> now passes` means the live code facts no longer make the model find a listed break. Confirm the fix in the code with a test, since a code fact can flip without the bug being gone, then remove the entry from `KNOWN_FINDINGS` and from Findings below. The check exits 1 until you do. If you fixed the code and still see `KNOWN FINDING still present`, the regex for that fact did not match the fix: update the regex so the fact flips, rerun, and then remove the entry.
 - `MODEL STALE` means one of the assumptions above no longer matches the code. See the next section.
@@ -95,9 +97,10 @@ The script prints `code facts` first. Each is a model constant read from the cod
 | `SetPropsSignalsLayout` | any call to `updateLayout` in `MenuItem.SetProps`. FALSE is correct. | `LabelChangeKeepsMenuOpen` when TRUE |
 | `RemoveLeavesOrphans` | `MenuItem.Remove` does not walk `item.children` or `item.getChildren()` (or call `removeTree` / `removeSubtree`) to delete descendants from `Menu.nodes`. FALSE is correct. | `NodesReachable` when TRUE |
 | `RemovedKeepsParent` | `getParent` does not look up `item.menu.nodes[item.id]`, and `Remove` does not assign `item.parent`. FALSE is correct. | `RemovedHasNoParent` and `NoDanglingChildIDs` when TRUE |
-| `ParentMustBeLive` | `MenuItem.AddChild` looks up `item.menu.nodes[item.id]`, and `appendChild` looks up `nodes[dst`. FALSE on the current code. | `NodesReachable` when FALSE |
+| `ParentMustBeLive` | `MenuItem.AddChild` looks up `item.menu.nodes[item.id]`, and `appendChild` looks up `nodes[dst`. TRUE is the current code. | `NodesReachable` when FALSE |
 | `RestoreRemovedToNodes` | `appendChild` assigns `menu.nodes[child.id]` and `MoveBefore` assigns `item.menu.nodes[item.id]`. FALSE on the current code. | `NoDanglingChildIDs` stays broken when this is FALSE and `RemovedKeepsParent` is TRUE |
 | `AboutToShowGroupRejectsRoot` | `AboutToShowGroup` has no `id == 0` or `id != 0` special case, so `menu.nodes[0]` is nil and 0 is reported in `invalid`. FALSE is correct. | `AboutToShowGroupAcceptsRoot` when TRUE |
+| `RejectCycleMoves` | `appendChild` and `MoveBefore` call `isAncestor`, and `MoveBefore` returns before mutating when `item == sibling`. TRUE is the current code. | `NodesReachable` and `Acyclic` when FALSE |
 
 An unconditional call is a statement at the top level of the method body, one tab deep. A call moved under an `if` turns the fact FALSE, and the model then treats the method as never sending the signal. When a condition is intended, model it as its own action instead of trusting the FALSE. The modeled host refetches the whole layout on any `LayoutUpdated`, so the facts only ask whether a method sends one, not which parent it names.
 
@@ -117,41 +120,20 @@ A new method that changes the menu has no fact and no action. Model it before tr
 | `AddChild(Root)` | `Menu.AddChild`: `newItem`, `applyProps`, `updateLayout(menu)`, the child's `emitPropertiesUpdated`, `setChildren` |
 | `AddChild(p)` | `MenuItem.AddChild` on a live or, unless `ParentMustBeLive`, a removed item: `setChildren`, `updateLayout(item)`, the child's `emitPropertiesUpdated`, then the parent's `children-display` |
 | `SetLabel` | `MenuItem.SetProps(MenuItemLabel(...))`: `applyProps`, `emitPropertiesUpdated`, after `getParent` is non-nil |
-| `RemoveItem` | `MenuItem.Remove`: the parent's `setChildren`, `delete(item.menu.nodes, ...)`, `updateLayout(parent)`, the parent's `children-display`. Descendants stay in `Menu.nodes` while `RemoveLeavesOrphans` is TRUE. `item.parent` is unchanged while `RemovedKeepsParent` is TRUE. |
-| `AppendChild` | `appendChild`, behind `Menu.AppendChild` and `MenuItem.AppendChild`, including a held pointer to a removed child while `getParent` is non-nil |
-| `MoveBefore` | `MenuItem.MoveBefore`, same rule for a removed child |
+| `RemoveItem` | `MenuItem.Remove`: the parent's `setChildren`, `item.removeSubtree` (clears `item.parent` and deletes the item and its descendants from `Menu.nodes`), `updateLayout(parent)`, the parent's `children-display`. |
+| `AppendChild` | `appendChild`, behind `Menu.AppendChild` and `MenuItem.AppendChild`, including a held pointer to a removed child while `getParent` is non-nil, and a no-op `RejectMove` when `isAncestor(child, dst)` |
+| `MoveBefore` | `MenuItem.MoveBefore`, same rule for a removed child, a no-op when `item == sibling`, and `RejectMove` when `isAncestor(item, dst)` |
 | `Serve` of a layout call | `dbusmenu.GetLayout` under `Menu.m`, through `buildLayout` and `buildChildren`, then `reply2` writing the reply with `conn.Send` before the unlock |
 | `Serve` of a props call | `dbusmenu.GetGroupProperties` under `Menu.m`, then `reply` writing the reply with `conn.Send` before the unlock |
 | `Reply` | only with `LateReply`: godbus `handleCall` writing the reply after the method returns |
 | `Host` | `_onSignal`, `_onPropertiesUpdated`, `_layoutUpdateUpdateAsync`, `_doLayoutUpdate`, and `_requestProperties` in the GNOME extension's `dbusMenu.js` |
 | `GroupInvalid` | `dbusmenu.AboutToShowGroup`: ids for which `menu.nodes[id]` is nil, unless `AboutToShowGroupRejectsRoot` is FALSE, in which case id 0 is treated like `AboutToShow(0)` |
 
-The model leaves out a move that puts an item under itself or its own child. The library does not check for one, and the cycle makes `buildLayout` recurse until the stack overflows.
-
 ## Findings
 
-The current code breaks the four properties below. They are listed in `KNOWN_FINDINGS` in the script, so the check exits 0 while they fail with the live code facts and hold when those facts are set to the fixed values. The main run at `MAX_ITEMS=3`, `MAX_OPS=3`, `MAX_LABEL=2` checks 13,679 distinct states and passes `LayoutConverges`, `PropsConverge`, `RevisionsIncrease`, and `LabelChangeKeepsMenuOpen`.
+The main run at `MAX_ITEMS=3`, `MAX_OPS=3`, `MAX_LABEL=2` checks 13,420 distinct states. `NodesReachable`, `NoDanglingChildIDs`, `RemovedHasNoParent`, `Acyclic`, and `AboutToShowGroupAcceptsRoot` now hold on the current code, along with `LayoutConverges`, `PropsConverge`, `RevisionsIncrease`, and `LabelChangeKeepsMenuOpen`. `Remove` clears `item.parent` and recursively detaches descendants, `getParent` returns nil for an item missing from `Menu.nodes`, `AddChild` and `appendChild` no-op when the destination is not live, `AboutToShowGroup` treats id 0 like `AboutToShow(0)`, and `AppendChild` and `MoveBefore` reject a move that would create a cycle. `TestRemoveDetachesDescendants`, `TestSetPropsAfterRemovedRootChild`, `TestAddChildOnRemovedItem`, `TestAppendChildAndMoveBeforeAfterRemove`, `TestRemoveAlreadyRemovedIsNoop`, `TestAboutToShowGroupAcceptsRoot`, `TestAppendChildSelfRejected`, `TestAppendChildAncestorRejected`, `TestMoveBeforeDescendantRejected`, and `TestMoveBeforeSelfIsNoop` cover those paths.
 
-`NodesReachable`. Every id in `Menu.nodes` must be reachable from the root. Shortest path, in the code's words:
-
-1. The app calls `menu.AddChild(...)` and keeps the `*MenuItem`.
-2. The app calls `item.Remove()`. The item is deleted from `Menu.nodes`. `item.parent` stays 0.
-3. The app calls `item.AddChild(...)` on that held pointer. `newItem` puts the new child in `Menu.nodes` under the removed item, so the new id is not reachable from the root.
-
-The same invariant also breaks when `Remove` is not recursive: add A, add B under A, then `A.Remove()`. B stays in `Menu.nodes` and is no longer reachable from the root.
-
-`RemovedHasNoParent`. A removed item must have `getParent() == nil`. Shortest path:
-
-1. The app calls `menu.AddChild(...)` and keeps the `*MenuItem`.
-2. The app calls `item.Remove()`. `item.parent` is still 0, so `getParent()` returns the `Menu`.
-
-`NoDanglingChildIDs`. Every id in a live `children` list must be in `Menu.nodes`. Shortest path:
-
-1. The app calls `menu.AddChild(...)` and keeps the `*MenuItem`.
-2. The app calls `item.Remove()`. The item is gone from `Menu.nodes`, but `getParent()` still returns the `Menu`.
-3. The app calls `menu.AppendChild(item)` (or `MoveBefore` a live sibling). `appendChild` inserts the deleted id into `Menu.children` and does not put it back into `Menu.nodes`.
-
-`AboutToShowGroupAcceptsRoot`. `AboutToShowGroup([0])` must check the root like `AboutToShow(0)`, not report 0 as invalid. This fails in the initial state: `AboutToShowGroup` looks up `menu.nodes[id]`, `Menu.nodes` has no id 0, and 0 is appended to `invalid`.
+The control run with `RejectCycleMoves` FALSE shows what the cycle guard prevents: an `AppendChild` or `MoveBefore` under the item or a descendant breaks `NodesReachable` and `Acyclic`.
 
 The control run shows what `GetLayout` and `GetGroupProperties` writing their own reply prevents. With `LateReply` TRUE, the shortest path, in the code's words:
 
@@ -166,12 +148,12 @@ A `GetLayout` reply can overtake a signal the same way. In the code, step 4 wait
 
 ## Keep it in step with the code
 
-Sync commit: `acf85ab` (the model was last confirmed to describe the covered code at this commit)
+Sync commit: `8284dd0` (the model was last confirmed to describe the covered code at this commit)
 
 Covered code:
 
 - `menu.go`: `Menu.updateLayout`, `Menu.revision`, `Menu.lock`, `Menu.setChildren`, `Menu.nodes`, `Menu.dirty`
-- `menuitem.go`: `Menu.AddChild`, `MenuItem.AddChild`, `MenuItem.Remove`, `appendChild`, `MenuItem.MoveBefore`, `MenuItem.SetProps`, `MenuItem.emitPropertiesUpdated`, `MenuItem.setChildren`, `MenuItem.getParent`
+- `menuitem.go`: `Menu.AddChild`, `MenuItem.AddChild`, `MenuItem.Remove`, `removeSubtree`, `appendChild`, `MenuItem.MoveBefore`, `MenuItem.SetProps`, `MenuItem.emitPropertiesUpdated`, `MenuItem.setChildren`, `isAncestor`, `MenuItem.getParent`
 - `dbusmenu.go`: `GetLayout`, `buildLayout`, `buildChildren`, `GetGroupProperties`, `AboutToShow`, `AboutToShowGroup`, `claimMenuReplies`, `flagReplyOwed`, `replyingMethods`, `reply`, `reply2`, `dbusmenu.send`
 - `item.go`: `New`, for the connection options
 - `go.mod`: the `github.com/godbus/dbus/v5` version, for `handleCall`

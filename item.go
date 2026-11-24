@@ -79,6 +79,11 @@ func New(props ...ItemProp) (*Item, error) {
 	item := Item{
 		conn: conn,
 	}
+	defer func() {
+		if err != nil {
+			_ = item.Close()
+		}
+	}()
 
 	err = item.initProtoData()
 	if err != nil {

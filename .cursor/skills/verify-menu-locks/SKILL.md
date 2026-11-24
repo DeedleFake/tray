@@ -74,7 +74,7 @@ These are assumptions the script cannot read from the code:
 - Changes to the menu tree happen under `Menu.m`, and so do all reads of it. So the model makes a function's tree reads and writes at the step that takes `Menu.m`.
 - The modeled `MenuEventHandler` calls `SetProps` on its own item. A handler that calls something else runs the same way, with nothing held.
 - `prop.Properties` locks, used by `Item.SetProps` and the `Menu` property getters, are never taken while a menu lock is held. They are separate from this model.
-- Like `verify-menu-sync`, the model leaves out a move that puts an item under itself or its own child. The code takes the same locks, so the model keeps those steps but leaves the tree unchanged. The library does not check for that move, and the cycle makes `buildLayout` recurse until the stack overflows.
+- `AppendChild` and `MoveBefore` reject a move that would put an item under itself or a descendant after taking `Menu.m` and before taking any item lock. This model does not include those attempts as their own steps; they take the same locks as other early returns under `Menu.m`.
 
 ## Read the result
 
@@ -132,7 +132,7 @@ None. The current code passes every property within the bounds above.
 
 ## Keep it in step with the code
 
-Sync commit: `acf85ab` (the model was last confirmed to describe the covered code at this commit)
+Sync commit: `8284dd0` (the model was last confirmed to describe the covered code at this commit)
 
 Covered code:
 
