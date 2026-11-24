@@ -148,6 +148,9 @@ func appendChild(menu *Menu, dst menuNode, child *MenuItem) error {
 		// TODO: Allow appending children who have previously been removed?
 		return nil
 	}
+	if isAncestor(child, dst) {
+		return errCycleMove
+	}
 
 	if dst != menu {
 		defer dst.lock()()
@@ -197,11 +200,18 @@ func (item *MenuItem) AppendChild(child *MenuItem) error {
 func (item *MenuItem) MoveBefore(sibling *MenuItem) error {
 	defer item.menu.lock()()
 
+	if item == sibling {
+		return nil
+	}
+
 	dst := sibling.getParent()
 	src := item.getParent()
 	if dst == nil || src == nil {
 		// TODO: Allow moving children who have previously been removed?
 		return nil
+	}
+	if isAncestor(item, dst) {
+		return errCycleMove
 	}
 
 	if dst != item.menu {
@@ -565,6 +575,24 @@ func MenuItemHandler(handler MenuEventHandler) MenuItemProp {
 
 func vendorPropName(vendor, prop string) string {
 	return fmt.Sprintf("x-%v-%v", vendor, prop)
+}
+
+var errCycleMove = errors.New("cannot move menu item under itself or a descendant")
+
+// isAncestor reports whether ancestor is node or sits above node in
+// the menu tree. The caller must hold the menu lock.
+func isAncestor(ancestor *MenuItem, node menuNode) bool {
+	for n := node; n != nil && n != ancestor.menu; {
+		item, ok := n.(*MenuItem)
+		if !ok {
+			return false
+		}
+		if item == ancestor {
+			return true
+		}
+		n = item.getParent()
+	}
+	return false
 }
 
 // getParent returns the parent of item, or nil if item has been
