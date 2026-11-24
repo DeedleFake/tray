@@ -2,23 +2,41 @@
 # Model-checks .cursor/skills/verify-menu-sync/model/MenuSync.tla with TLC.
 # The model's code-fact constants are read from the code, so removing a
 # signal or a revision bump in the code turns its constant FALSE and the
-# check shows what breaks.
+# check shows what breaks. The same is true of the facts that describe
+# Remove, getParent, AddChild/AppendChild on a removed item, and
+# AboutToShowGroup's handling of the root.
 set -euo pipefail
 
 TLA_VERSION=1.8.0
-TLA_SHA256=fc6878c603f0fdc18b9fe3e5bf51860cb90ab5b1154e3c371660c036d6bdd63e
+TLA_SHA256=fdffef247f563ef6edbfd44958d2a82db79e7564e07cb673262d896353fa6713
 
 # Model bounds. SKILL.md explains what each one covers.
 MAX_ITEMS=${MAX_ITEMS:-3}
 MAX_OPS=${MAX_OPS:-3}
 MAX_LABEL=${MAX_LABEL:-2}
 
-# Properties the current code is known to break, as PROPERTY:BOUND. The
-# property must hold with the BOUND constant FALSE and is expected to fail
-# with it TRUE. Remove an entry once the code is fixed and the check passes it.
-KNOWN_FINDINGS=()
+# Properties the current code is known to break, as
+# PROPERTY:Const=BugVal[,Const=BugVal]...
+# The property must hold when those constants are set to the opposite
+# (fixed) values, and is expected to fail with the live code facts.
+# Remove an entry once the code is fixed and the check passes it.
+KNOWN_FINDINGS=(
+  "NodesReachable:RemoveLeavesOrphans=TRUE,ParentMustBeLive=FALSE"
+  "NoDanglingChildIDs:RemovedKeepsParent=TRUE"
+  "RemovedHasNoParent:RemovedKeepsParent=TRUE"
+  "AboutToShowGroupAcceptsRoot:AboutToShowGroupRejectsRoot=TRUE"
+)
 
-PROPERTIES=(LayoutConverges PropsConverge RevisionsIncrease LabelChangeKeepsMenuOpen)
+PROPERTIES=(
+  LayoutConverges
+  PropsConverge
+  RevisionsIncrease
+  LabelChangeKeepsMenuOpen
+  NodesReachable
+  NoDanglingChildIDs
+  RemovedHasNoParent
+  AboutToShowGroupAcceptsRoot
+)
 
 ONLY=
 if [[ ${1:-} == --only ]]; then
@@ -54,6 +72,7 @@ anchor() {
   perl -0777 -ne "exit(/$2/s ? 0 : 1)" "$ROOT/$1" && echo TRUE || echo FALSE
 }
 all() { local v; for v in "$@"; do [[ $v == TRUE ]] || { echo FALSE; return; }; done; echo TRUE; }
+not() { [[ $1 == TRUE ]] && echo FALSE || echo TRUE; }
 
 BODY='(?:(?!\n\}\n).)*?'
 # A statement at the top level of a function body, so the call always runs.
@@ -84,6 +103,38 @@ REPLY_UNDER_LOCK=$(all \
 LATE_REPLY=$([[ $REPLY_UNDER_LOCK == TRUE ]] && echo FALSE || echo TRUE)
 flag SetPropsSignalsLayout "$(anchor menuitem.go 'func \(item \*MenuItem\) SetProps\('"$BODY"'updateLayout\(')"
 
+# TRUE while Remove does not walk the item's descendants to delete them
+# from Menu.nodes. A recursive helper or a loop over item.children /
+# item.getChildren() that deletes from nodes flips this FALSE.
+flag RemoveLeavesOrphans "$(not "$(anchor menuitem.go 'func \(item \*MenuItem\) Remove\(\) error \{'"$BODY"'(?:removeTree\(|removeSubtree\(|for [^\n]*(?:item\.children|item\.getChildren\(\))'"$BODY"'delete\()')")"
+
+# TRUE while getParent can return non-nil for an item not in Menu.nodes:
+# getParent does not look up item.id in nodes, and Remove does not
+# assign item.parent. Either fix flips this FALSE.
+GETPARENT_CHECKS_NODE=$(anchor menuitem.go 'func \(item \*MenuItem\) getParent\(\) menuNode \{'"$BODY"'item\.menu\.nodes\[item\.id\]')
+REMOVE_CLEARS_PARENT=$(anchor menuitem.go 'func \(item \*MenuItem\) Remove\(\) error \{'"$BODY"'item\.parent\s*=')
+if [[ $GETPARENT_CHECKS_NODE == TRUE || $REMOVE_CLEARS_PARENT == TRUE ]]; then
+  flag RemovedKeepsParent FALSE
+else
+  flag RemovedKeepsParent TRUE
+fi
+
+# TRUE when MenuItem.AddChild and appendChild refuse a receiver that is
+# not the menu and not in Menu.nodes.
+flag ParentMustBeLive "$(all \
+  "$(anchor menuitem.go 'func \(item \*MenuItem\) AddChild\('"$BODY"'item\.menu\.nodes\[item\.id\]')" \
+  "$(anchor menuitem.go 'func appendChild\('"$BODY"'nodes\[dst')")"
+
+# TRUE when both appendChild and MoveBefore put the child back into
+# Menu.nodes.
+flag RestoreRemovedToNodes "$(all \
+  "$(anchor menuitem.go 'func appendChild\('"$BODY"'menu\.nodes\[child\.id\]\s*=')" \
+  "$(anchor menuitem.go 'func \(item \*MenuItem\) MoveBefore\('"$BODY"'item\.menu\.nodes\[item\.id\]\s*=')")"
+
+# TRUE while AboutToShowGroup has no special case for the root id 0,
+# so nodes[0] is nil and 0 is reported in invalid.
+flag AboutToShowGroupRejectsRoot "$(not "$(anchor dbusmenu.go 'func \(menu \*dbusmenu\) AboutToShowGroup\('"$BODY"'(?:id == 0|id != 0)')")"
+
 # Assumptions the model's steps rest on. Each must hold, or the model no
 # longer describes the code.
 ASSUMPTIONS=()
@@ -94,11 +145,13 @@ done
 assume "GetLayout holds menu.m while it builds the layout" "$(anchor dbusmenu.go 'func \(menu \*dbusmenu\) GetLayout\('"$BODY"'menu\.m\.Lock\(\)\n\tdefer menu\.m\.Unlock\(\)'"$BODY"'menu\.buildLayout\(parent, recursionDepth, propertyNames\)')"
 assume "buildLayout copies every property into the reply" "$(anchor dbusmenu.go 'func \(menu \*dbusmenu\) buildLayout\('"$BODY"'Properties: mapSlice\(item\.props, nil\)')"
 assume "updateLayout emits LayoutUpdated for each node it is given" "$(anchor menu.go 'for _, node := range nodes \{\s*id := node\.getID\(\)\s*err := menu\.item\.conn\.Emit\(menuPath, "com\.canonical\.dbusmenu\.LayoutUpdated"')"
+assume "getParent returns the menu when item.parent is 0" "$(anchor menuitem.go 'func \(item \*MenuItem\) getParent\(\) menuNode \{'"$BODY"'if item\.parent == 0 \{\s*return item\.menu')"
+assume "AboutToShow returns whether the id is in menu.dirty" "$(anchor dbusmenu.go 'func \(menu \*dbusmenu\) AboutToShow\('"$BODY"'return menu\.dirty\.Contains\(id\), nil')"
 
 echo "code facts (model constants):"
-printf '  %-25s %s\n' LateReply "$LATE_REPLY"
+printf '  %-28s %s\n' LateReply "$LATE_REPLY"
 for k in "${FLAG_NAMES[@]}"; do
-  v="FLAG_$k"; printf '  %-25s %s\n' "$k" "${!v}"
+  v="FLAG_$k"; printf '  %-28s %s\n' "$k" "${!v}"
 done
 if (( ${#ASSUMPTIONS[@]} > 0 )); then
   echo "MODEL STALE: these steps no longer match the code, so a result would not describe it:"
@@ -109,29 +162,56 @@ fi
 rm -rf "$OUT" && mkdir -p "$OUT"
 cp "$SKILL_DIR/model/MenuSync.tla" "$OUT/"
 
-# write_cfg NAME LATE_REPLY INVARIANTS...
+# OVERRIDE_FACTS is a comma-separated Const=VAL list, or empty.
+OVERRIDE_FACTS=
+
+fact_val() {
+  local k=$1
+  if [[ -n $OVERRIDE_FACTS ]]; then
+    local part
+    IFS=',' read -ra parts <<<"$OVERRIDE_FACTS"
+    for part in "${parts[@]}"; do
+      if [[ ${part%%=*} == "$k" ]]; then
+        echo "${part#*=}"
+        return
+      fi
+    done
+  fi
+  if [[ $k == LateReply ]]; then
+    echo "$LATE_REPLY"
+    return
+  fi
+  local v="FLAG_$k"
+  echo "${!v}"
+}
+
+# write_cfg NAME INVARIANTS...
 write_cfg() {
-  local name=$1 late=$2; shift 2
+  local name=$1; shift
   {
     echo "SPECIFICATION Spec"
     echo "CONSTANTS"
     echo "  MaxItems = $MAX_ITEMS"
     echo "  MaxOps = $MAX_OPS"
     echo "  MaxLabel = $MAX_LABEL"
-    echo "  LateReply = $late"
-    for k in "${FLAG_NAMES[@]}"; do v="FLAG_$k"; echo "  $k = ${!v}"; done
+    echo "  LateReply = $(fact_val LateReply)"
+    local k
+    for k in "${FLAG_NAMES[@]}"; do
+      echo "  $k = $(fact_val "$k")"
+    done
     echo "CHECK_DEADLOCK FALSE"
     echo "INVARIANT TypeOK $*"
   } >"$OUT/$name.cfg"
 }
 
-# run NAME LATE_REPLY INVARIANTS...: prints the violated invariant, "none",
-# or "tool-error".
+# run NAME INVARIANTS...: prints the violated invariant, "none", or
+# "tool-error".
 run() {
   local name=$1; shift
   write_cfg "$name" "$@"
   (cd "$OUT" && java -XX:+UseParallelGC -cp "$JAR" tlc2.TLC -config "$name.cfg" \
-    -workers "$WORKERS" -metadir "$OUT/meta-$name" -nowarning MenuSync.tla) >"$OUT/$name.out" 2>&1 || true
+    -workers "$WORKERS" -metadir "$OUT/meta-$name" -nowarning \
+    -dumpTrace json "$OUT/$name.trace.json" MenuSync.tla) >"$OUT/$name.out" 2>&1 || true
   if grep -q '^Model checking completed. No error has been found.' "$OUT/$name.out"; then
     echo none
   elif v=$(grep -oE '^Error: Invariant [A-Za-z]+ is violated' "$OUT/$name.out" | awk '{print $3}'); [[ -n $v ]]; then
@@ -139,6 +219,21 @@ run() {
   else
     echo tool-error
   fi
+}
+
+flip() { [[ $1 == TRUE ]] && echo FALSE || echo TRUE; }
+
+# fixed_facts "Const=BugVal,Const=BugVal" -> "Const=Fixed,Const=Fixed"
+fixed_facts() {
+  local entry=$1 part k val out=()
+  IFS=',' read -ra parts <<<"$entry"
+  for part in "${parts[@]}"; do
+    k=${part%%=*}
+    val=${part#*=}
+    out+=("$k=$(flip "$val")")
+  done
+  local IFS=,
+  echo "${out[*]}"
 }
 
 if [[ -n $ONLY ]]; then KNOWN_FINDINGS=(); fi
@@ -150,7 +245,7 @@ for p in "${PROPERTIES[@]}"; do is_known "$p" || expected+=("$p"); done
 
 status=0
 start=$SECONDS
-result=$(run main "$LATE_REPLY" "${expected[@]}")
+result=$(run main "${expected[@]}")
 case $result in
   none) echo "PASS  ${expected[*]}" ;;
   tool-error) echo "TOOL ERROR, see $OUT/main.out"; status=2 ;;
@@ -158,17 +253,19 @@ case $result in
 esac
 
 for entry in "${KNOWN_FINDINGS[@]}"; do
-  f=${entry%%:*} bound=${entry#*:}
-  r=$(run "$f-without-$bound" FALSE "$f")
+  f=${entry%%:*} bounds=${entry#*:}
+  OVERRIDE_FACTS=$(fixed_facts "$bounds")
+  r=$(run "$f-fixed" "$f")
   case $r in
-    none) echo "PASS  $f with $bound FALSE" ;;
-    tool-error) echo "TOOL ERROR, see $OUT/$f-without-$bound.out"; status=2 ;;
-    *) echo "FAIL  $r with $bound FALSE (counterexample: $OUT/$f-without-$bound.out)"; [[ $status == 0 ]] && status=1 ;;
+    none) echo "PASS  $f with fixed $OVERRIDE_FACTS" ;;
+    tool-error) echo "TOOL ERROR, see $OUT/$f-fixed.out"; status=2 ;;
+    *) echo "FAIL  $r with fixed $OVERRIDE_FACTS (counterexample: $OUT/$f-fixed.out)"; [[ $status == 0 ]] && status=1 ;;
   esac
-  r=$(run "$f" TRUE "$f")
+  OVERRIDE_FACTS=
+  r=$(run "$f" "$f")
   case $r in
-    "$f") echo "KNOWN FINDING still present: $f with $bound TRUE (counterexample: $OUT/$f.out)" ;;
-    none) echo "FIXED? $f now passes with $bound TRUE. Confirm the fix with a test, then remove it from KNOWN_FINDINGS and the findings in SKILL.md."; status=1 ;;
+    "$f") echo "KNOWN FINDING still present: $f (counterexample: $OUT/$f.out)" ;;
+    none) echo "FIXED? $f now passes with the live code facts. Confirm the fix with a test, then remove it from KNOWN_FINDINGS and the findings in SKILL.md."; status=1 ;;
     tool-error) echo "TOOL ERROR, see $OUT/$f.out"; status=2 ;;
     *) echo "FAIL  $r while checking $f (counterexample: $OUT/$f.out)"; [[ $status == 0 ]] && status=1 ;;
   esac
@@ -176,12 +273,14 @@ done
 # The model must still find the race without the fix, or a pass above
 # proves nothing about it.
 if [[ -z $ONLY ]]; then
-  r=$(run PropsConverge-with-LateReply TRUE PropsConverge)
+  OVERRIDE_FACTS="LateReply=TRUE"
+  r=$(run PropsConverge-with-LateReply PropsConverge)
   case $r in
     PropsConverge) echo "PASS  PropsConverge fails with LateReply TRUE, as it must" ;;
     none) echo "FAIL  PropsConverge passes with LateReply TRUE, so the model no longer sees the race"; status=1 ;;
     *) echo "TOOL ERROR, see $OUT/PropsConverge-with-LateReply.out"; status=2 ;;
   esac
+  OVERRIDE_FACTS=
 fi
 echo "model checked in $((SECONDS - start))s"
 
